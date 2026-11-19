@@ -1,7 +1,9 @@
 import {initializeApp} from 'firebase/app';
 import {
+  browserLocalPersistence,
   getAuth,
   GoogleAuthProvider,
+  setPersistence,
   signInWithPopup,
   signOut as firebaseSignOut,
   User,
@@ -14,10 +16,12 @@ import {
   getDocFromServer,
   getDocs,
   getFirestore,
+  query,
   serverTimestamp,
   setDoc,
   Timestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {CROP_CATALOG_META} from '../data/cropCatalogMeta';
@@ -26,13 +30,17 @@ import {
   FarmNote,
   LanguageCode,
   PriceAlert,
-  WeatherAlertPrefs,
 } from '../types/krishi';
 
 const app = initializeApp(firebaseConfig);
 const configuredDbId = (firebaseConfig as {firestoreDatabaseId?: string}).firestoreDatabaseId;
 export const db = configuredDbId ? getFirestore(app, configuredDbId) : getFirestore(app);
 export const auth = getAuth(app);
+
+// Ensure Firebase Auth sessions persist reliably across page reloads
+const persistenceReady: Promise<void> = setPersistence(auth, browserLocalPersistence).catch(
+  () => undefined,
+);
 
 let cachedOAuthAccessToken: string | null = null;
 
@@ -118,6 +126,7 @@ export async function signInWithGoogle(includeWorkspaceScopes = false): Promise<
   user: User;
   accessToken: string | null;
 }> {
+  await persistenceReady;
   const provider = new GoogleAuthProvider();
   provider.addScope('profile');
   provider.addScope('email');
@@ -126,6 +135,8 @@ export async function signInWithGoogle(includeWorkspaceScopes = false): Promise<
       provider.addScope(scope);
     }
     provider.setCustomParameters({prompt: 'consent'});
+  } else {
+    provider.setCustomParameters({prompt: 'select_account'});
   }
   const result = await signInWithPopup(auth, provider);
   const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -172,7 +183,8 @@ function sanitizeId(raw: string): string {
 }
 
 function sanitizeSlug(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9_\-]/g, '-').slice(0, 64) || 'bengaluru-rural';
+  const cleaned = raw.toLowerCase().replace(/[^a-z0-9_\-]/g, '-').slice(0, 64);
+  return cleaned.length >= 2 ? cleaned : 'bengaluru-rural';
 }
 
 function sanitizeText(raw: string, maxLen: number): string {
@@ -247,7 +259,11 @@ export async function loadUserCloudState(uid: string): Promise<CloudUserBundle> 
   const alertsPath = `users/${uid}/alerts`;
   const alerts: PriceAlert[] = [];
   try {
-    const alertsSnap = await getDocs(collection(db, 'users', uid, 'alerts'));
+    const alertsQuery = query(
+      collection(db, 'users', uid, 'alerts'),
+      where('ownerUid', '==', uid),
+    );
+    const alertsSnap = await getDocs(alertsQuery);
     alertsSnap.forEach((d) => {
       const data = d.data();
       alerts.push({
@@ -268,7 +284,11 @@ export async function loadUserCloudState(uid: string): Promise<CloudUserBundle> 
   const notesPath = `users/${uid}/notes`;
   const notes: FarmNote[] = [];
   try {
-    const notesSnap = await getDocs(collection(db, 'users', uid, 'notes'));
+    const notesQuery = query(
+      collection(db, 'users', uid, 'notes'),
+      where('ownerUid', '==', uid),
+    );
+    const notesSnap = await getDocs(notesQuery);
     notesSnap.forEach((d) => {
       const data = d.data();
       notes.push({
@@ -298,7 +318,7 @@ export async function saveFarmerProfile(
 
   const safeFarmerName = sanitizeText(profile.farmerName, 80) || 'Farmer';
   const safeEmail = sanitizeText(
-    profile.email || auth.currentUser?.email || '',
+    auth.currentUser?.email || profile.email || '',
     160,
   );
 

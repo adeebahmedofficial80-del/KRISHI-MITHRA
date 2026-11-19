@@ -1,4 +1,4 @@
-import {CropCategory} from '../types/krishi';
+import type {CropCategory} from '../types/krishi.ts';
 
 export interface CropCatalogMeta {
   id: string;

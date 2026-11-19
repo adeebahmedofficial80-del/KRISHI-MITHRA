@@ -7,14 +7,22 @@ export type NavTab = 'home' | 'markets' | 'weather' | 'my-crops' | 'insights';
 export type PriceDisplayUnit = 'kg' | 'quintal';
 
 export type MarketDataSourceStatus =
-  | 'live_agmarknet'
-  | 'cached_agmarknet'
+  | 'gemini_grounded'
+  | 'cached_grounded'
+  | 'unavailable'
   | 'catalog_reference';
 
 export type WeatherAdvisorySourceType =
   | 'official_imd'
+  | 'official_grounded'
   | 'weather_derived'
-  | 'crop_suggestion';
+  | 'crop_suggestion'
+  | 'ai_summary';
+
+export interface GroundedSourceRef {
+  title: string;
+  url: string;
+}
 
 export interface PriceHistoryPoint {
   date: string;
@@ -41,6 +49,8 @@ export interface MarketPriceEntry {
   distanceKm?: number;
   priceType: 'Wholesale Mandi';
   dataSource?: MarketDataSourceStatus;
+  sourceName?: string;
+  sourceUrl?: string;
 }
 
 export interface NutritionProfile {
@@ -92,16 +102,22 @@ export interface CropProduct {
   modalPriceQuintal?: number;
   minimumPriceQuintal?: number;
   maximumPriceQuintal?: number;
+  measurementUnit?: string;
   priceChangePercent: number;
   priceChangeAbsolute?: number | null;
   previousComparablePrice?: number | null;
   hasComparableHistory?: boolean;
+  hasVerifiedPrice?: boolean;
   market: string;
   marketId: string;
   marketState?: string;
   marketDistrict?: string;
   updatedAt: string;
   observationDate?: string;
+  retrievedAt?: string;
+  sourceName?: string;
+  sourceUrl?: string;
+  sourceUrls?: GroundedSourceRef[];
   isDemo: boolean;
   dataSource?: MarketDataSourceStatus;
   isStale?: boolean;
@@ -144,15 +160,18 @@ export interface MarketCenter {
 }
 
 export interface ForecastDay {
-  date: string;
-  dayLabel: string;
-  minTemp: number;
-  maxTemp: number;
-  condition: 'Sunny' | 'Mostly sunny' | 'Partly cloudy' | 'Cloudy' | 'Light rain' | 'Rain showers';
-  rainProbability: number;
-  rainfallMm: number;
-  humidity: number;
-  windSpeedMax?: number;
+  date: string; // YYYY-MM-DD in Asia/Kolkata (IST)
+  weekday: string; // e.g., Thu, Fri
+  shortDate: string; // e.g., 19 Nov
+  dayLabel: string; // e.g., Today, Fri 20 Nov
+  minTemp: number | null;
+  maxTemp: number | null;
+  condition: string | null;
+  rainProbability: number | null;
+  rainfallMm: number | null;
+  humidity: number | null;
+  windSpeedMax?: number | null;
+  warning?: string | null;
 }
 
 export interface WeatherAlertItem {
@@ -163,6 +182,8 @@ export interface WeatherAlertItem {
   summary: string;
   action: string;
   sourceType?: WeatherAdvisorySourceType;
+  sourceName?: string;
+  sourceUrl?: string;
   issuedAt?: string;
 }
 
@@ -174,28 +195,45 @@ export interface FarmAdvisory {
   reason: string;
   timeWindow: string;
   sourceType?: WeatherAdvisorySourceType;
+  sourceName?: string;
+  sourceUrl?: string;
   relatedCropIds?: string[];
 }
 
 export interface WeatherSnapshot {
   locationId: string;
   locationName: string;
-  currentTemperature: number;
-  feelsLike: number;
-  condition: ForecastDay['condition'];
-  humidity: number;
-  windSpeed: number;
-  windDirection: string;
-  rainProbability: number;
-  sunrise: string;
-  sunset: string;
-  source: 'live' | 'cached' | 'demo';
+  state?: string;
+  district?: string;
+  taluk?: string;
+  currentTemperature: number | null;
+  feelsLike: number | null;
+  condition: string | null;
+  todayMinTemp: number | null;
+  todayMaxTemp: number | null;
+  todayForecastCondition: string | null;
+  humidity: number | null;
+  windSpeed: number | null;
+  windDirection: string | null;
+  windSummary: string | null;
+  rainProbability: number | null;
+  sunrise: string | null;
+  sunset: string | null;
+  source: 'live' | 'cached';
   sourceLabel: string;
-  officialProvider: 'imd_and_open_meteo' | 'open_meteo' | 'cached_open_meteo';
+  officialProvider: 'gemini_google_search' | 'cached_gemini_google_search';
+  primarySourceName?: string | null;
+  primarySourceUrl?: string | null;
+  observationDate?: string | null;
+  forecastPublishedAt?: string | null;
+  retrievedAt: string;
   isStale?: boolean;
   staleReason?: string;
+  quotaLimited?: boolean;
+  unavailableFields?: string[];
   observedAtIso?: string;
   updatedAt: string;
+  groundedSources: GroundedSourceRef[];
   forecast: ForecastDay[];
   alerts: WeatherAlertItem[];
   advisories: FarmAdvisory[];
@@ -258,7 +296,8 @@ export interface MarketSyncStatus {
   matchedCropCount: number;
   isStale: boolean;
   staleReason: string | null;
-  agmarknetConfigured: boolean;
+  geminiSearchEnabled: boolean;
+  quotaLimited?: boolean;
   missingCredentials: string[];
   nextScheduledSyncAt: string | null;
 }
@@ -271,6 +310,7 @@ export interface MarketPriceObservation {
   district: string;
   market: string;
   arrivalDate: string;
+  measurementUnit: string;
   minPriceQuintal: number;
   maxPriceQuintal: number;
   modalPriceQuintal: number;
@@ -281,6 +321,10 @@ export interface MarketPriceObservation {
   priceChangeAbsoluteKg: number | null;
   priceChangePercent: number | null;
   sourceStatus: MarketDataSourceStatus;
+  sourceName: string;
+  sourceUrl: string;
+  sourceUrls: GroundedSourceRef[];
+  retrievedAt: string;
   history7d: PriceHistoryPoint[];
   comparisons: MarketPriceEntry[];
 }
@@ -303,4 +347,38 @@ export interface DailyBriefingResponse {
     weatherSource: string;
     weatherUpdatedAt: string | null;
   };
+}
+
+export type PlantingSeasonLabel =
+  | 'Kharif'
+  | 'Rabi'
+  | 'Zaid'
+  | 'Kharif & Rabi'
+  | 'Year-Round'
+  | 'Perennial Orchard';
+
+export type PlantingReadinessKind =
+  | 'ideal_sow'
+  | 'harvest_ready'
+  | 'caution_weather'
+  | 'active_growing'
+  | 'off_season';
+
+export interface PlantingCropSchedule {
+  cropId: string;
+  seasonLabel: PlantingSeasonLabel;
+  sowingMonths: number[]; // 1 (Jan) to 12 (Dec)
+  harvestMonths: number[]; // 1 (Jan) to 12 (Dec)
+  daysToHarvest: string;
+  idealTempMinC: number;
+  idealTempMaxC: number;
+  maxSafeSowingRainMm: number;
+  sowingTip: string;
+  harvestTip: string;
+}
+
+export interface PlantingReadinessResult {
+  kind: PlantingReadinessKind;
+  label: string;
+  detail: string;
 }

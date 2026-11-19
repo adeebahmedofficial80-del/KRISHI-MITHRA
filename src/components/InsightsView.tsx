@@ -89,23 +89,32 @@ export function InsightsView({
     [products],
   );
 
-  // Build dynamic report draft from farmer's tracked crops (or top staples) + real weather
+  // Build dynamic report draft from farmer's verified tracked crops + real weather
   const buildDynamicDraft = useCallback(() => {
     const tracked = favoriteCropIds
       .map((id) => products.find((p) => p.id === id))
       .filter((p): p is CropProduct => Boolean(p));
-    const sample = (tracked.length > 0 ? tracked : products).slice(0, 4);
-    const priceLines = sample
-      .map((crop) => {
-        const changeSuffix = crop.hasComparableHistory
-          ? ` (${crop.priceChangePercent >= 0 ? '+' : ''}${crop.priceChangePercent}%)`
-          : '';
-        return `${crop.name} ₹${crop.modalPrice}/kg${changeSuffix}`;
-      })
-      .join(', ');
-    const weatherPart = weather
-      ? ` | Weather: ${weather.currentTemperature}°C, ${weather.condition}, ${weather.rainProbability}% rain`
-      : '';
+    const verifiedPool = (tracked.length > 0 ? tracked : products)
+      .filter((p) => p.hasVerifiedPrice)
+      .slice(0, 4);
+    const priceLines =
+      verifiedPool.length > 0
+        ? verifiedPool
+            .map((crop) => {
+              const changeSuffix = crop.hasComparableHistory
+                ? ` (${crop.priceChangePercent >= 0 ? '+' : ''}${crop.priceChangePercent}%)`
+                : '';
+              return `${crop.name} ₹${crop.modalPrice}/kg at ${crop.market}${changeSuffix}`;
+            })
+            .join(', ')
+        : 'Live mandi prices pending Gemini Search fetch';
+    const weatherBits: string[] = [];
+    if (weather) {
+      if (weather.currentTemperature !== null) weatherBits.push(`${weather.currentTemperature}°C`);
+      if (weather.condition) weatherBits.push(weather.condition);
+      if (weather.rainProbability !== null) weatherBits.push(`${weather.rainProbability}% rain`);
+    }
+    const weatherPart = weatherBits.length > 0 ? ` | Weather: ${weatherBits.join(', ')}` : '';
     return `KRISHI-MITHRA Update (${location.district}, ${location.state}) by ${farmerName}: ${priceLines}.${weatherPart}`;
   }, [favoriteCropIds, products, weather, location.district, location.state, farmerName]);
 
@@ -155,16 +164,24 @@ export function InsightsView({
         cropContext: {
           crop: selectedContextCrop.name,
           variety: selectedContextCrop.variety,
-          modalPriceInrPerKg: selectedContextCrop.modalPrice,
-          modalPriceInrPerQuintal:
-            selectedContextCrop.modalPriceQuintal ?? selectedContextCrop.modalPrice * 100,
-          minPrice: selectedContextCrop.minimumPrice,
-          maxPrice: selectedContextCrop.maximumPrice,
-          weeklyTrendPercent: selectedContextCrop.hasComparableHistory
-            ? selectedContextCrop.priceChangePercent
+          hasVerifiedPrice: Boolean(selectedContextCrop.hasVerifiedPrice),
+          modalPriceInrPerKg: selectedContextCrop.hasVerifiedPrice
+            ? selectedContextCrop.modalPrice
             : null,
-          market: selectedContextCrop.market,
-          dataSource: selectedContextCrop.dataSource || 'catalog_reference',
+          modalPriceInrPerQuintal: selectedContextCrop.hasVerifiedPrice
+            ? selectedContextCrop.modalPriceQuintal ??
+              Math.round(selectedContextCrop.modalPrice * 100)
+            : null,
+          minPrice: selectedContextCrop.hasVerifiedPrice ? selectedContextCrop.minimumPrice : null,
+          maxPrice: selectedContextCrop.hasVerifiedPrice ? selectedContextCrop.maximumPrice : null,
+          weeklyTrendPercent:
+            selectedContextCrop.hasVerifiedPrice && selectedContextCrop.hasComparableHistory
+              ? selectedContextCrop.priceChangePercent
+              : null,
+          market: selectedContextCrop.hasVerifiedPrice ? selectedContextCrop.market : null,
+          observationDate: selectedContextCrop.observationDate || null,
+          sourceName: selectedContextCrop.sourceName || null,
+          dataSource: selectedContextCrop.dataSource || 'unavailable',
           storage: selectedContextCrop.storage,
           shelfLife: selectedContextCrop.shelfLife,
         },
@@ -277,28 +294,41 @@ export function InsightsView({
       </section>
 
       {/* Calculated Data Insights */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {calculatedInsights.map((ins) => (
-          <button
-            key={ins.id}
-            type="button"
-            onClick={() => onOpenCropDetail(ins.cropId)}
-            className="bg-white border border-[#E4E9E0] rounded-2xl p-4 text-left hover:border-[#245C3A] transition-colors cursor-pointer"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#245C3A]">
-                <Lightbulb className="w-4 h-4" />
-                <span>{ins.isReference ? 'Catalog Reference Insight' : 'Live Market Insight'}</span>
+      {calculatedInsights.length > 0 ? (
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {calculatedInsights.map((ins) => (
+            <button
+              key={ins.id}
+              type="button"
+              onClick={() => onOpenCropDetail(ins.cropId)}
+              className="bg-white border border-[#E4E9E0] rounded-2xl p-4 text-left hover:border-[#245C3A] transition-colors cursor-pointer"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#245C3A]">
+                  <Lightbulb className="w-4 h-4" />
+                  <span>Verified Online Market Insight</span>
+                </div>
+                <span className="font-mono text-xs font-bold text-[#245C3A] tabular-nums">
+                  {ins.metric}
+                </span>
               </div>
-              <span className="font-mono text-xs font-bold text-[#245C3A] tabular-nums">
-                {ins.metric}
-              </span>
-            </div>
-            <h2 className="mt-2 text-base font-bold text-[#202820]">{ins.title}</h2>
-            <p className="mt-1 text-xs sm:text-sm text-[#6B756A] leading-relaxed">{ins.detail}</p>
-          </button>
-        ))}
-      </section>
+              <h2 className="mt-2 text-base font-bold text-[#202820]">{ins.title}</h2>
+              <p className="mt-1 text-xs sm:text-sm text-[#6B756A] leading-relaxed">{ins.detail}</p>
+            </button>
+          ))}
+        </section>
+      ) : (
+        <section className="bg-white border border-dashed border-[#D3DDD0] rounded-2xl p-5 text-center">
+          <Lightbulb className="w-6 h-6 text-[#245C3A] mx-auto" />
+          <p className="mt-2 text-sm font-semibold text-[#202820]">
+            Verified market insights appear automatically once live prices are fetched
+          </p>
+          <p className="mt-1 text-xs text-[#6B756A]">
+            Use Fetch Live Prices on the Home Dashboard or Market Prices tab to retrieve current
+            Gemini-grounded mandi observations.
+          </p>
+        </section>
+      )}
 
       {/* Deep-Thinking KRISHI-MITHRA AI Advisor */}
       <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6 space-y-4">
@@ -323,7 +353,8 @@ export function InsightsView({
           >
             {products.map((c) => (
               <option key={c.id} value={c.id}>
-                Context: {t.cropNames[c.id] || c.name} (₹{c.modalPrice}/kg)
+                Context: {t.cropNames[c.id] || c.name}
+                {c.hasVerifiedPrice ? ` (₹${c.modalPrice}/kg)` : ''}
               </option>
             ))}
           </select>

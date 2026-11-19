@@ -68,11 +68,11 @@ export function BriefingPlayerBar({
               <p className="text-[11px] text-[#5B675B]">
                 {briefing.dataSources.weatherSource}
                 {' · '}
-                {briefing.dataSources.marketStatus === 'live_agmarknet'
-                  ? `AGMARKNET (${briefing.dataSources.marketObservationDate || 'Today'})`
-                  : briefing.dataSources.marketStatus === 'cached_agmarknet'
-                    ? `Cached AGMARKNET (${briefing.dataSources.marketObservationDate || 'Recent'})`
-                    : 'Market baseline (AGMARKNET key not set)'}
+                {briefing.dataSources.marketStatus === 'gemini_grounded'
+                  ? `Gemini Live Search (${briefing.dataSources.marketObservationDate || 'Latest'})`
+                  : briefing.dataSources.marketStatus === 'cached_grounded'
+                    ? `Cached Gemini Search (${briefing.dataSources.marketObservationDate || 'Recent'})`
+                    : 'Verified market prices pending'}
                 {briefing.cached ? ' · Instant cache' : ''}
               </p>
             )}

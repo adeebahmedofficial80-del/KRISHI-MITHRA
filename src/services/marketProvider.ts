@@ -30,16 +30,20 @@ export interface CalculatedInsightItem {
   isReference: boolean;
 }
 
+export const UNAVAILABLE_PRICE_MESSAGE =
+  'Latest verified market price is currently unavailable.';
+
 export const DEFAULT_MARKET_SYNC_STATUS: MarketSyncStatus = {
-  sourceStatus: 'catalog_reference',
-  sourceLabel: 'Checking market data feed...',
+  sourceStatus: 'unavailable',
+  sourceLabel: 'Checking Gemini live market search...',
   lastSyncAt: null,
   observationDate: null,
   recordCount: 0,
   matchedCropCount: 0,
   isStale: true,
   staleReason: null,
-  agmarknetConfigured: false,
+  geminiSearchEnabled: true,
+  quotaLimited: false,
   missingCredentials: [],
   nextScheduledSyncAt: null,
 };
@@ -54,9 +58,19 @@ export function mergeMarketObservations(
     if (!obs) {
       return {
         ...crop,
-        dataSource: 'catalog_reference',
+        hasVerifiedPrice: false,
+        hasComparableHistory: false,
+        priceChangePercent: 0,
+        priceChangeAbsolute: null,
+        previousComparablePrice: null,
+        dataSource: 'unavailable',
         isDemo: true,
         isStale: true,
+        sourceName: undefined,
+        sourceUrl: undefined,
+        sourceUrls: undefined,
+        retrievedAt: undefined,
+        observationDate: undefined,
       };
     }
 
@@ -71,24 +85,29 @@ export function mergeMarketObservations(
       modalPriceQuintal: obs.modalPriceQuintal,
       minimumPriceQuintal: obs.minPriceQuintal,
       maximumPriceQuintal: obs.maxPriceQuintal,
+      measurementUnit: obs.measurementUnit,
       priceChangePercent: obs.priceChangePercent ?? 0,
       priceChangeAbsolute: obs.priceChangeAbsoluteKg,
       previousComparablePrice: obs.previousComparableModalKg,
       hasComparableHistory,
+      hasVerifiedPrice: true,
       market: obs.market,
       marketState: obs.state,
       marketDistrict: obs.district,
       updatedAt: obs.arrivalDate,
       observationDate: obs.arrivalDate,
+      retrievedAt: obs.retrievedAt,
+      sourceName: obs.sourceName,
+      sourceUrl: obs.sourceUrl,
+      sourceUrls: obs.sourceUrls,
       isDemo: false,
-      dataSource: status.sourceStatus,
+      dataSource: obs.sourceStatus || status.sourceStatus,
       isStale: status.isStale,
       priceHistory: {
         ...crop.priceHistory,
-        '7d': obs.history7d.length > 0 ? obs.history7d : crop.priceHistory['7d'],
+        '7d': obs.history7d.length > 0 ? obs.history7d : [],
       },
-      marketComparisons:
-        obs.comparisons.length > 0 ? obs.comparisons : crop.marketComparisons,
+      marketComparisons: obs.comparisons.length > 0 ? obs.comparisons : [],
     };
   });
 }
@@ -97,11 +116,19 @@ export async function fetchDynamicMarketFeed(params: {
   state?: string;
   district?: string;
   preferredMandi?: string;
+  cropIds?: string[];
+  autoFetch?: boolean;
 }): Promise<MarketFeedResponse> {
   const qs = new URLSearchParams();
   if (params.state) qs.set('state', params.state);
   if (params.district) qs.set('district', params.district);
   if (params.preferredMandi) qs.set('preferredMandi', params.preferredMandi);
+  if (params.cropIds && params.cropIds.length > 0) {
+    qs.set('crops', params.cropIds.slice(0, 6).join(','));
+  }
+  if (params.autoFetch) {
+    qs.set('autoFetch', '1');
+  }
 
   const res = await fetch(`/api/market/prices?${qs.toString()}`);
   if (!res.ok) {
@@ -110,15 +137,40 @@ export async function fetchDynamicMarketFeed(params: {
   return (await res.json()) as MarketFeedResponse;
 }
 
-export async function triggerMarketSync(state?: string): Promise<MarketFeedResponse> {
+export async function triggerGeminiMarketSync(params: {
+  state?: string;
+  district?: string;
+  preferredMandi?: string;
+  cropIds?: string[];
+  forceRefresh?: boolean;
+}): Promise<MarketFeedResponse> {
   const res = await fetch('/api/market/sync', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({state}),
+    body: JSON.stringify(params),
   });
   const data = (await res.json()) as MarketFeedResponse & {error?: string};
   if (!res.ok) {
-    throw new Error(data.error || 'Unable to refresh AGMARKNET prices.');
+    throw new Error(data.error || 'Unable to retrieve live market prices via Gemini Search.');
+  }
+  return data;
+}
+
+export async function fetchSingleCropLivePrice(params: {
+  cropId: string;
+  state?: string;
+  district?: string;
+  preferredMandi?: string;
+  forceRefresh?: boolean;
+}): Promise<MarketFeedResponse> {
+  const res = await fetch('/api/market/crop-search', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as MarketFeedResponse & {error?: string};
+  if (!res.ok) {
+    throw new Error(data.error || 'Unable to retrieve verified price for this crop.');
   }
   return data;
 }
@@ -127,7 +179,9 @@ export function getMarketComparisonForProduct(
   product: CropProduct | undefined,
   location: LocationOption,
 ): MarketComparisonSummary | null {
-  if (!product || product.marketComparisons.length === 0) return null;
+  if (!product || !product.hasVerifiedPrice || product.marketComparisons.length === 0) {
+    return null;
+  }
 
   const entries = product.marketComparisons.map((entry) => {
     const center = KARNATAKA_MARKETS.find((m) => m.id === entry.marketId);
@@ -161,18 +215,42 @@ export function getMarketComparisonForProduct(
 }
 
 export function calculateInsightsForProducts(products: CropProduct[]): CalculatedInsightItem[] {
-  if (products.length === 0) return [];
+  const verified = products.filter((p) => p.hasVerifiedPrice);
+  if (verified.length === 0) {
+    return [];
+  }
 
-  const liveWithHistory = products.filter((p) => !p.isDemo && p.hasComparableHistory);
-  const pool = liveWithHistory.length >= 2 ? liveWithHistory : products;
-  const isRefPool = liveWithHistory.length < 2;
+  const items: CalculatedInsightItem[] = [];
+  const withHistory = verified.filter((p) => p.hasComparableHistory);
 
-  const sortedByGain = [...pool].sort((a, b) => b.priceChangePercent - a.priceChangePercent);
-  const topGainer = sortedByGain[0];
-  const secondGainer = sortedByGain[1] || sortedByGain[0];
-  const topDrop = [...pool].sort((a, b) => a.priceChangePercent - b.priceChangePercent)[0];
+  if (withHistory.length > 0) {
+    const sortedByGain = [...withHistory].sort(
+      (a, b) => b.priceChangePercent - a.priceChangePercent,
+    );
+    const topGainer = sortedByGain[0];
+    items.push({
+      id: 'ins-gain-1',
+      category: 'weekly_trend',
+      title: `${topGainer.name} leads verified price movement`,
+      metric: `${topGainer.priceChangePercent > 0 ? '+' : ''}${topGainer.priceChangePercent}% · ₹${topGainer.modalPrice}/kg`,
+      detail: `${topGainer.name} (${topGainer.variety}) recorded ₹${topGainer.modalPrice}/kg at ${topGainer.market} (${topGainer.observationDate || topGainer.updatedAt}), grounded via ${topGainer.sourceName || 'Gemini Search'}.`,
+      cropId: topGainer.id,
+      isReference: false,
+    });
+  } else {
+    const topModal = [...verified].sort((a, b) => b.modalPrice - a.modalPrice)[0];
+    items.push({
+      id: 'ins-verified-1',
+      category: 'weekly_trend',
+      title: `Latest verified rate: ${topModal.name}`,
+      metric: `₹${topModal.modalPrice}/kg (₹${topModal.modalPriceQuintal ?? Math.round(topModal.modalPrice * 100)}/qtl)`,
+      detail: `Verified at ${topModal.market}${topModal.marketState ? `, ${topModal.marketState}` : ''} on ${topModal.observationDate || topModal.updatedAt}. Additional daily syncs will unlock multi-day % change history.`,
+      cropId: topModal.id,
+      isReference: false,
+    });
+  }
 
-  const spreads = products
+  const spreads = verified
     .filter((p) => p.marketComparisons.length >= 2)
     .map((crop) => {
       const prices = crop.marketComparisons.map((m) => m.modalPrice);
@@ -182,68 +260,29 @@ export function calculateInsightsForProducts(products: CropProduct[]): Calculate
     })
     .sort((a, b) => b.spread - a.spread);
 
-  const biggestSpread = spreads[0];
-  const vegSpread = spreads.find((s) => s.crop.category === 'vegetable') || biggestSpread;
-
-  const items: CalculatedInsightItem[] = [
-    {
-      id: 'ins-gain-1',
-      category: 'weekly_trend',
-      title: isRefPool
-        ? `${topGainer.name} reference price benchmark`
-        : `${topGainer.name} leads comparable price gains`,
-      metric:
-        topGainer.hasComparableHistory && !topGainer.isDemo
-          ? `${topGainer.priceChangePercent > 0 ? '+' : ''}${topGainer.priceChangePercent}% · ₹${topGainer.modalPrice}/kg`
-          : `₹${topGainer.modalPrice}/kg (₹${topGainer.modalPriceQuintal ?? topGainer.modalPrice * 100}/qtl)`,
-      detail: isRefPool
-        ? `${topGainer.name} (${topGainer.variety}) reference baseline is ₹${topGainer.modalPrice}/kg. Configure live AGMARKNET sync for verified daily mandi movements.`
-        : `${topGainer.name} (${topGainer.variety}) recorded the strongest verified comparable gain at ${topGainer.market}, followed by ${secondGainer.name}.`,
-      cropId: topGainer.id,
-      isReference: topGainer.isDemo,
-    },
-  ];
-
-  if (biggestSpread) {
+  if (spreads[0]) {
+    const best = spreads[0];
     items.push({
       id: 'ins-spread-1',
       category: 'market_spread',
-      title: `Widest mandi spread in ${biggestSpread.crop.name}`,
-      metric: `₹${biggestSpread.spread}/kg spread`,
-      detail: `Modal rates for ${biggestSpread.crop.name} span ₹${biggestSpread.min}/kg to ₹${biggestSpread.max}/kg across listed markets. Always subtract crate transport and hamali cost before travelling further.`,
-      cropId: biggestSpread.crop.id,
-      isReference: biggestSpread.crop.isDemo,
+      title: `Observed mandi spread in ${best.crop.name}`,
+      metric: `₹${best.spread}/kg spread`,
+      detail: `Verified modal prices for ${best.crop.name} span ₹${best.min}/kg to ₹${best.max}/kg across reported markets. Weigh crate transport and hamali charges before travelling farther.`,
+      cropId: best.crop.id,
+      isReference: false,
     });
   }
 
-  if (vegSpread) {
+  for (const crop of verified.slice(0, 3)) {
+    if (items.some((i) => i.cropId === crop.id)) continue;
     items.push({
-      id: 'ins-spread-veg',
-      category: 'market_spread',
-      title: `Top vegetable range: ${vegSpread.crop.name}`,
-      metric: `₹${vegSpread.min}–₹${vegSpread.max}/kg`,
-      detail: `Grade-A sorting, clean moisture-free crates, and early morning arrival help capture the upper end of the ${vegSpread.crop.name} range.`,
-      cropId: vegSpread.crop.id,
-      isReference: vegSpread.crop.isDemo,
-    });
-  }
-
-  if (topDrop && topDrop.id !== topGainer.id) {
-    items.push({
-      id: 'ins-drop-1',
+      id: `ins-obs-${crop.id}`,
       category: 'seasonal_watch',
-      title: topDrop.isDemo
-        ? `Market watch: ${topDrop.name}`
-        : `Supply softening observed in ${topDrop.name}`,
-      metric:
-        topDrop.hasComparableHistory && !topDrop.isDemo
-          ? `${topDrop.priceChangePercent}% · ₹${topDrop.modalPrice}/kg`
-          : `₹${topDrop.modalPrice}/kg`,
-      detail: topDrop.isDemo
-        ? `${topDrop.name} has a ${topDrop.shelfLife.toLowerCase()} storage profile. Monitor live APMC arrivals once AGMARKNET sync is active.`
-        : `Higher mandi arrivals softened ${topDrop.name} modal rates compared to the prior verified date. Consider cured holding where shelf life permits.`,
-      cropId: topDrop.id,
-      isReference: topDrop.isDemo,
+      title: `${crop.name} · ${crop.market}`,
+      metric: `₹${crop.minimumPrice}–₹${crop.maximumPrice}/kg`,
+      detail: `Modal ₹${crop.modalPrice}/kg reported on ${crop.observationDate || crop.updatedAt} (${crop.sourceName || 'Verified Online Source'}). Shelf life: ${crop.shelfLife}.`,
+      cropId: crop.id,
+      isReference: false,
     });
   }
 

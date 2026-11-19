@@ -12,6 +12,7 @@ import {
   Map as MapIcon,
   Minus,
   PackageCheck,
+  RefreshCw,
   Share2,
   Sprout,
   ThermometerSnowflake,
@@ -31,7 +32,10 @@ import {
 } from 'recharts';
 import {TranslationPack} from '../data/translations';
 import {fetchMandiGrounding, MandiGroundingResult} from '../services/aiClient';
-import {getMarketComparisonForProduct} from '../services/marketProvider';
+import {
+  getMarketComparisonForProduct,
+  UNAVAILABLE_PRICE_MESSAGE,
+} from '../services/marketProvider';
 import {
   CropProduct,
   LanguageCode,
@@ -51,6 +55,8 @@ interface ProductDetailPanelProps {
   location: LocationOption;
   isFavorite: boolean;
   cropAlerts: PriceAlert[];
+  isFetchingLivePrice?: boolean;
+  onFetchLivePrice?: () => void;
   onToggleFavorite: (cropId: string) => void;
   onOpenAlertModal: (crop: CropProduct) => void;
   onSelectCrop: (cropId: string) => void;
@@ -75,6 +81,8 @@ export function ProductDetailPanel({
   location,
   isFavorite,
   cropAlerts,
+  isFetchingLivePrice = false,
+  onFetchLivePrice,
   onToggleFavorite,
   onOpenAlertModal,
   onSelectCrop,
@@ -159,13 +167,12 @@ export function ProductDetailPanel({
   };
 
   const handleCopyShare = async () => {
-    const sourceTag = crop.isDemo
-      ? 'Reference baseline'
-      : `AGMARKNET observation (${crop.updatedAt})`;
-    const shareText = `${cropName} (${crop.variety}) — ${marketDisplayName}: Modal ₹${crop.modalPrice}/kg (₹${crop.modalPriceQuintal ?? crop.modalPrice * 100}/quintal), Range ₹${crop.minimumPrice}–₹${crop.maximumPrice}/kg. ${sourceTag}.`;
+    const shareText = crop.hasVerifiedPrice
+      ? `${cropName} (${crop.variety}) — ${marketDisplayName}: Modal ₹${crop.modalPrice}/kg (₹${crop.modalPriceQuintal ?? Math.round(crop.modalPrice * 100)}/quintal), Range ₹${crop.minimumPrice}–₹${crop.maximumPrice}/kg. Date: ${crop.observationDate || crop.updatedAt}. Source: ${crop.sourceName || 'Gemini Search'}${crop.sourceUrl ? ` (${crop.sourceUrl})` : ''}.`
+      : `${cropName} (${crop.variety}) — ${UNAVAILABLE_PRICE_MESSAGE}`;
     try {
       await navigator.clipboard.writeText(shareText);
-      onNotify(`Copied ${cropName} market summary to clipboard.`);
+      onNotify(`Copied ${cropName} summary to clipboard.`);
     } catch {
       onNotify(shareText);
     }
@@ -265,9 +272,18 @@ export function ProductDetailPanel({
             )}
 
             <p className="mt-2 text-xs text-[#6B756A] tabular-nums">
-              {crop.isDemo
-                ? 'Reference catalog baseline (live AGMARKNET sync not active for this crop yet)'
-                : `AGMARKNET observation · ${crop.updatedAt}${crop.isStale ? ' (Cached)' : ''}`}
+              {crop.hasVerifiedPrice
+                ? `Verified via ${crop.sourceName || 'Gemini Search Grounding'} · Date: ${crop.observationDate || crop.updatedAt}${
+                    crop.retrievedAt
+                      ? ` · Retrieved ${new Date(crop.retrievedAt).toLocaleString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}`
+                      : ''
+                  }`
+                : UNAVAILABLE_PRICE_MESSAGE}
             </p>
 
             {/* Primary Action Row */}
@@ -289,6 +305,24 @@ export function ProductDetailPanel({
                 <span>{isFavorite ? t.savedInMyCrops : t.addToMyCrops}</span>
               </button>
 
+              {onFetchLivePrice && (
+                <button
+                  type="button"
+                  disabled={isFetchingLivePrice}
+                  onClick={onFetchLivePrice}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-[#245C3A]/35 bg-[#EAF3E8] text-[#1E4A2F] hover:bg-[#DCECD8] disabled:opacity-60 cursor-pointer min-h-[44px]"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isFetchingLivePrice ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isFetchingLivePrice
+                      ? 'Searching Live Mandis...'
+                      : crop.hasVerifiedPrice
+                        ? 'Refresh Live Price'
+                        : 'Fetch Live Price'}
+                  </span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => onOpenAlertModal(crop)}
@@ -305,29 +339,24 @@ export function ProductDetailPanel({
 
               <button
                 type="button"
-                onClick={() => scrollToSection('sec-markets')}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-[#E4E9E0] bg-white text-[#202820] hover:bg-[#FAF9F4] cursor-pointer min-h-[44px]"
-              >
-                <span>{t.compareMarketsTab}</span>
-              </button>
-
-              <button
-                type="button"
                 disabled={isAudioLoading}
                 onClick={() =>
                   onListen({
                     key: audioKey,
-                    text: `${cropName} at ${marketDisplayName}. ${crop.isDemo ? 'Catalog reference' : 'Observed'} modal rate is ${crop.modalPrice} rupees per kilogram (${crop.modalPriceQuintal ?? crop.modalPrice * 100} rupees per quintal), ranging from ${crop.minimumPrice} to ${crop.maximumPrice} rupees per kilogram. ${crop.farmerInsights[0] || ''}`,
+                    text: crop.hasVerifiedPrice
+                      ? `${cropName} at ${marketDisplayName}. Verified modal rate is ${crop.modalPrice} rupees per kilogram (${crop.modalPriceQuintal ?? Math.round(crop.modalPrice * 100)} rupees per quintal), ranging from ${crop.minimumPrice} to ${crop.maximumPrice} rupees per kilogram as of ${crop.observationDate || crop.updatedAt}. ${crop.farmerInsights[0] || ''}`
+                      : `${cropName}. ${UNAVAILABLE_PRICE_MESSAGE} ${crop.farmerInsights[0] || ''}`,
                     language,
                     quickSummarizeTopic: `${crop.name} market rate and harvest advice`,
                     quickSummarizePayload: {
                       crop: crop.name,
-                      market: crop.market,
-                      isReferenceBaseline: crop.isDemo,
-                      modalPriceInrPerKg: crop.modalPrice,
-                      modalPriceInrPerQuintal: crop.modalPriceQuintal ?? crop.modalPrice * 100,
-                      minPriceKg: crop.minimumPrice,
-                      maxPriceKg: crop.maximumPrice,
+                      market: crop.hasVerifiedPrice ? crop.market : null,
+                      hasVerifiedPrice: Boolean(crop.hasVerifiedPrice),
+                      modalPriceInrPerKg: crop.hasVerifiedPrice ? crop.modalPrice : null,
+                      modalPriceInrPerQuintal: crop.hasVerifiedPrice
+                        ? crop.modalPriceQuintal ?? Math.round(crop.modalPrice * 100)
+                        : null,
+                      observationDate: crop.observationDate || null,
                       tip: crop.farmerInsights[0],
                     },
                   })
@@ -361,189 +390,270 @@ export function ProductDetailPanel({
         </div>
       </section>
 
-      {/* SECTION B: MARKET PRICE OVERVIEW (Explicit Units: ₹/kg and ₹/Quintal) */}
+      {/* SECTION B: VERIFIED LIVE MARKET PRICE OVERVIEW */}
       <section
         id="sec-price"
         className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6"
       >
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
-          <div className="lg:col-span-6">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#6B756A]">
-              {crop.isDemo ? 'Reference Modal Rate' : t.modalPriceToday} · {marketDisplayName}
-            </p>
-            <div className="mt-2 flex flex-wrap items-baseline gap-3">
-              <span className="font-mono text-4xl sm:text-5xl font-bold text-[#202820] tabular-nums">
-                ₹{modalDisplay}
-              </span>
-              <span className="text-lg font-medium text-[#6B756A]">/ {unitSuffix}</span>
+        {crop.hasVerifiedPrice ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
+              <div className="lg:col-span-6">
+                <p className="text-xs font-semibold uppercase tracking-wider text-[#245C3A]">
+                  {t.modalPriceToday} · {marketDisplayName}
+                  {crop.marketDistrict ? `, ${crop.marketDistrict}` : ''}
+                  {crop.marketState ? `, ${crop.marketState}` : ''}
+                </p>
+                <div className="mt-2 flex flex-wrap items-baseline gap-3">
+                  <span className="font-mono text-4xl sm:text-5xl font-bold text-[#202820] tabular-nums">
+                    ₹{modalDisplay}
+                  </span>
+                  <span className="text-lg font-medium text-[#6B756A]">/ {unitSuffix}</span>
 
-              {crop.hasComparableHistory && !crop.isDemo ? (
-                <span
-                  className={`inline-flex items-center gap-1 text-sm font-semibold tabular-nums ${
-                    isRising
-                      ? 'text-[#245C3A]'
-                      : isFalling
-                        ? 'text-amber-700'
-                        : 'text-[#6B756A]'
-                  }`}
-                >
-                  {isRising ? (
-                    <ArrowUpRight className="w-4 h-4" />
-                  ) : isFalling ? (
-                    <ArrowDownRight className="w-4 h-4" />
+                  {crop.hasComparableHistory ? (
+                    <span
+                      className={`inline-flex items-center gap-1 text-sm font-semibold tabular-nums ${
+                        isRising
+                          ? 'text-[#245C3A]'
+                          : isFalling
+                            ? 'text-amber-700'
+                            : 'text-[#6B756A]'
+                      }`}
+                    >
+                      {isRising ? (
+                        <ArrowUpRight className="w-4 h-4" />
+                      ) : isFalling ? (
+                        <ArrowDownRight className="w-4 h-4" />
+                      ) : (
+                        <Minus className="w-4 h-4" />
+                      )}
+                      <span>
+                        {crop.priceChangePercent > 0 ? '+' : ''}
+                        {crop.priceChangePercent}%
+                      </span>
+                      <span className="font-normal text-[#6B756A]">
+                        · {isRising ? t.priceRising : isFalling ? t.priceFalling : t.priceStable}
+                      </span>
+                    </span>
                   ) : (
-                    <Minus className="w-4 h-4" />
+                    <span className="text-xs text-[#6B756A] bg-[#F4F7F1] px-2.5 py-1 rounded-lg border border-[#E2E8DC]">
+                      First verified date recorded
+                    </span>
                   )}
-                  <span>
-                    {crop.priceChangePercent > 0 ? '+' : ''}
-                    {crop.priceChangePercent}%
-                  </span>
-                  <span className="font-normal text-[#6B756A]">
-                    · {isRising ? t.priceRising : isFalling ? t.priceFalling : t.priceStable}
-                  </span>
+                </div>
+                <p className="mt-2 text-xs text-[#6B756A] font-mono tabular-nums">
+                  Equivalent:{' '}
+                  {priceUnit === 'quintal'
+                    ? `₹${crop.modalPrice}/kg`
+                    : `₹${Math.round(crop.modalPriceQuintal ?? crop.modalPrice * 100)}/quintal (100 kg)`}
+                  {' · '}
+                  Observation: {crop.observationDate || crop.updatedAt}
+                </p>
+              </div>
+
+              <div className="lg:col-span-6 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
+                  <p className="text-xs text-[#6B756A]">{t.minPrice}</p>
+                  <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
+                    ₹{minDisplay}/{unitSuffix}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
+                  <p className="text-xs text-[#6B756A]">{t.maxPrice}</p>
+                  <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
+                    ₹{maxDisplay}/{unitSuffix}
+                  </p>
+                </div>
+                <div className="col-span-2 sm:col-span-1 rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/60 p-3.5">
+                  <p className="text-xs text-[#245C3A] font-medium">Unit Basis</p>
+                  <p className="mt-1 text-xs font-semibold text-[#245C3A] leading-snug">
+                    {crop.measurementUnit || '₹/Quintal & ₹/kg'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Verified Online Source Citations & Retrieval Timestamp */}
+            <div className="pt-3 border-t border-[#E4E9E0] flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-[#202820]">
+                  Source: {crop.sourceName || 'Online Mandi Report'}
                 </span>
-              ) : (
-                <span className="text-xs text-[#6B756A] bg-[#F4F7F1] px-2.5 py-1 rounded-lg border border-[#E2E8DC]">
-                  {crop.isDemo
-                    ? 'Reference baseline'
-                    : 'No comparable prior date recorded yet'}
+                {crop.sourceUrls && crop.sourceUrls.length > 0 ? (
+                  crop.sourceUrls.slice(0, 3).map((src, i) => (
+                    <a
+                      key={`${src.url}-${i}`}
+                      href={src.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#F4F7F1] border border-[#E2E8DC] text-[#245C3A] font-medium hover:underline"
+                    >
+                      <span className="max-w-[180px] truncate">{src.title}</span>
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                    </a>
+                  ))
+                ) : crop.sourceUrl ? (
+                  <a
+                    href={crop.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#F4F7F1] border border-[#E2E8DC] text-[#245C3A] font-medium hover:underline"
+                  >
+                    <span>Verify Source</span>
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+                ) : null}
+              </div>
+              {crop.retrievedAt && (
+                <span className="font-mono text-[11px] text-[#6B756A]">
+                  Retrieved:{' '}
+                  {new Date(crop.retrievedAt).toLocaleString('en-IN', {
+                    day: 'numeric',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
                 </span>
               )}
             </div>
-            <p className="mt-2 text-xs text-[#6B756A] font-mono tabular-nums">
-              Equivalent:{' '}
-              {priceUnit === 'quintal'
-                ? `₹${crop.modalPrice}/kg`
-                : `₹${Math.round(crop.modalPriceQuintal ?? crop.modalPrice * 100)}/quintal (100 kg)`}
-              {' · '}
-              {crop.updatedAt}
-            </p>
           </div>
-
-          <div className="lg:col-span-6 grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
-              <p className="text-xs text-[#6B756A]">{t.minPrice}</p>
-              <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
-                ₹{minDisplay}/{unitSuffix}
+        ) : (
+          <div className="rounded-xl border border-dashed border-[#D3DDD0] bg-[#FAF9F4] p-6 text-center space-y-3">
+            <Globe className="w-7 h-7 text-[#245C3A] mx-auto" />
+            <div>
+              <h3 className="text-base font-bold text-[#202820]">
+                {UNAVAILABLE_PRICE_MESSAGE}
+              </h3>
+              <p className="mt-1 text-xs sm:text-sm text-[#6B756A] max-w-lg mx-auto">
+                We only display verified online mandi prices retrieved via Gemini Google Search
+                grounding. Tap below to search current APMC, eNAM, and state marketing portals for{' '}
+                {cropName} in {location.district}, {location.state}.
               </p>
             </div>
-            <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
-              <p className="text-xs text-[#6B756A]">{t.maxPrice}</p>
-              <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
-                ₹{maxDisplay}/{unitSuffix}
-              </p>
-            </div>
-            <div className="col-span-2 sm:col-span-1 rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/60 p-3.5">
-              <p className="text-xs text-[#245C3A] font-medium">
-                {crop.isDemo ? 'Baseline Avg' : '7D Average'}
-              </p>
-              <p className="mt-1 font-mono text-xl font-bold text-[#245C3A] tabular-nums">
-                ₹
-                {Math.round(
-                  (crop.priceHistory['7d'].reduce((s, p) => s + p.modal, 0) /
-                    Math.max(1, crop.priceHistory['7d'].length)) *
-                    (priceUnit === 'quintal' ? 100 : 1),
-                )}
-                /{unitSuffix}
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* SECTION C: PRICE TREND & HISTORICAL CHART */}
-      <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div>
-            <h3 className="text-lg font-bold text-[#202820]">{t.priceTrend}</h3>
-            <p className="text-xs text-[#6B756A]">
-              {crop.isDemo
-                ? 'Reference baseline series (live historical observations populate automatically as daily AGMARKNET syncs run)'
-                : 'Verified modal, minimum, and maximum daily mandi rates (₹/kg)'}
-            </p>
-          </div>
-          <div className="inline-flex rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-1">
-            {(
-              [
-                {key: '7d', label: t.days7},
-                {key: '30d', label: t.days30},
-                {key: '90d', label: t.days90},
-              ] as const
-            ).map((opt) => (
+            {onFetchLivePrice && (
               <button
-                key={opt.key}
                 type="button"
-                onClick={() => setRange(opt.key)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-                  range === opt.key
-                    ? 'bg-white text-[#245C3A] shadow-xs border border-[#E4E9E0]'
-                    : 'text-[#6B756A] hover:text-[#202820]'
-                }`}
+                disabled={isFetchingLivePrice}
+                onClick={onFetchLivePrice}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#245C3A] text-white text-sm font-semibold hover:bg-[#1d4b2f] disabled:opacity-60 cursor-pointer"
               >
-                {opt.label}
+                <RefreshCw className={`w-4 h-4 ${isFetchingLivePrice ? 'animate-spin' : ''}`} />
+                <span>
+                  {isFetchingLivePrice
+                    ? `Searching online mandis for ${cropName}...`
+                    : `Fetch Live ${cropName} Price via Gemini`}
+                </span>
               </button>
-            ))}
+            )}
           </div>
-        </div>
-
-        <div className="h-64 sm:h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{top: 8, right: 12, left: -12, bottom: 4}}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E4E9E0" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{fontSize: 11, fill: '#6B756A'}}
-                tickLine={false}
-                axisLine={{stroke: '#E4E9E0'}}
-                minTickGap={22}
-              />
-              <YAxis
-                tick={{fontSize: 11, fill: '#6B756A'}}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => `₹${v}`}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#FFFFFF',
-                  borderColor: '#E4E9E0',
-                  borderRadius: '12px',
-                  fontSize: '12px',
-                }}
-                formatter={(value: unknown, name: unknown) => [`₹${value}/kg`, String(name)]}
-              />
-              <Legend wrapperStyle={{fontSize: '12px'}} />
-              <Line
-                type="monotone"
-                dataKey="max"
-                name={t.maxPrice}
-                stroke="#78A85A"
-                strokeWidth={1.75}
-                strokeDasharray="4 4"
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="modal"
-                name="Modal"
-                stroke="#245C3A"
-                strokeWidth={2.75}
-                dot={range === '7d' ? {r: 3, fill: '#245C3A'} : false}
-                activeDot={{r: 5}}
-              />
-              <Line
-                type="monotone"
-                dataKey="min"
-                name={t.minPrice}
-                stroke="#94A393"
-                strokeWidth={1.75}
-                strokeDasharray="2 3"
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+        )}
       </section>
+
+      {/* SECTION C: VERIFIED PRICE TREND & HISTORICAL CHART */}
+      {crop.hasVerifiedPrice && (
+        <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h3 className="text-lg font-bold text-[#202820]">{t.priceTrend}</h3>
+              <p className="text-xs text-[#6B756A]">
+                Verified historical mandi observations archived from Gemini Google Search grounding
+                (₹/kg)
+              </p>
+            </div>
+            <div className="inline-flex rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-1">
+              {(
+                [
+                  {key: '7d', label: t.days7},
+                  {key: '30d', label: t.days30},
+                  {key: '90d', label: t.days90},
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setRange(opt.key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+                    range === opt.key
+                      ? 'bg-white text-[#245C3A] shadow-xs border border-[#E4E9E0]'
+                      : 'text-[#6B756A] hover:text-[#202820]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {chartData.length >= 2 ? (
+            <div className="h-64 sm:h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{top: 8, right: 12, left: -12, bottom: 4}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E4E9E0" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{fontSize: 11, fill: '#6B756A'}}
+                    tickLine={false}
+                    axisLine={{stroke: '#E4E9E0'}}
+                    minTickGap={22}
+                  />
+                  <YAxis
+                    tick={{fontSize: 11, fill: '#6B756A'}}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v) => `₹${v}`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#FFFFFF',
+                      borderColor: '#E4E9E0',
+                      borderRadius: '12px',
+                      fontSize: '12px',
+                    }}
+                    formatter={(value: unknown, name: unknown) => [`₹${value}/kg`, String(name)]}
+                  />
+                  <Legend wrapperStyle={{fontSize: '12px'}} />
+                  <Line
+                    type="monotone"
+                    dataKey="max"
+                    name={t.maxPrice}
+                    stroke="#78A85A"
+                    strokeWidth={1.75}
+                    strokeDasharray="4 4"
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="modal"
+                    name="Modal"
+                    stroke="#245C3A"
+                    strokeWidth={2.75}
+                    dot={range === '7d' ? {r: 3, fill: '#245C3A'} : false}
+                    activeDot={{r: 5}}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="min"
+                    name={t.minPrice}
+                    stroke="#94A393"
+                    strokeWidth={1.75}
+                    strokeDasharray="2 3"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-4 text-xs text-[#6B756A]">
+              Historical trend chart builds automatically once observations from 2 or more distinct
+              market dates are retrieved for {cropName}. Current verified observation:{' '}
+              <strong className="text-[#202820]">
+                ₹{crop.modalPrice}/kg on {crop.observationDate || crop.updatedAt}
+              </strong>
+              .
+            </div>
+          )}
+        </section>
+      )}
 
       {/* SECTION D: MARKET COMPARISON + INTERACTIVE MAP + GEMINI LIVE MANDI GROUNDING */}
       {comparison && (
@@ -998,7 +1108,9 @@ export function ProductDetailPanel({
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-[#202820] truncate">{relName}</p>
                     <p className="font-mono text-xs font-bold text-[#245C3A] tabular-nums">
-                      {formatRate(rel.modalPrice, rel.modalPriceQuintal)}
+                      {rel.hasVerifiedPrice
+                        ? formatRate(rel.modalPrice, rel.modalPriceQuintal)
+                        : 'Tap to check live rate'}
                     </p>
                   </div>
                 </button>

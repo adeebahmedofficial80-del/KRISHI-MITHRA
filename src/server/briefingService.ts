@@ -1,9 +1,9 @@
 import {GoogleGenAI, ThinkingLevel} from '@google/genai';
-import {CROP_CATALOG_META} from '../data/cropCatalogMeta';
-import {findLocationById} from '../data/locations';
-import {DailyBriefingResponse, LanguageCode} from '../types/krishi';
-import {marketService} from './marketService';
-import {getDynamicWeatherForecast} from './weatherService';
+import {CROP_CATALOG_META} from '../data/cropCatalogMeta.ts';
+import {findLocationById} from '../data/locations.ts';
+import type {DailyBriefingResponse, LanguageCode} from '../types/krishi.ts';
+import {marketService} from './marketService.ts';
+import {getDynamicWeatherForecast} from './weatherService.ts';
 
 const BRIEFING_CACHE_TTL_MS = 25 * 60 * 1000;
 
@@ -37,7 +37,7 @@ function getTimeGreeting(date = new Date()): string {
 }
 
 function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured on the server.');
   }
@@ -48,6 +48,23 @@ function getAiClient(): GoogleGenAI {
         'User-Agent': 'aistudio-build',
       },
     },
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s.`));
+    }, timeoutMs);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
   });
 }
 
@@ -84,7 +101,7 @@ export async function generatePersonalizedDailyBriefing(
     savedCropIds.slice().sort().join(','),
     input.language,
     dateKey,
-    marketStatus.lastSyncAt || 'ref',
+    marketStatus.lastSyncAt || 'none',
   ].join('|');
 
   const existing = briefingCache.get(cacheKey);
@@ -103,64 +120,70 @@ export async function generatePersonalizedDailyBriefing(
 
   const promise = (async (): Promise<DailyBriefingResponse> => {
     try {
+      // If the farmer has saved crops and none are freshly grounded yet, trigger live Gemini Search grounding
+      const marketFeedPromise =
+        savedCropIds.length > 0
+          ? marketService.fetchGroundedMarketPrices({
+              cropIds: savedCropIds.slice(0, 6),
+              state,
+              district,
+              preferredMandi,
+              forceRefresh: false,
+            })
+          : Promise.resolve(
+              marketService.getMarketFeed({
+                state,
+                district,
+                preferredMandi,
+              }),
+            );
+
       const [marketFeed, weatherResult] = await Promise.all([
-        Promise.resolve(
+        withTimeout(marketFeedPromise, 12000, 'Market feed lookup').catch(() =>
           marketService.getMarketFeed({
             state,
             district,
             preferredMandi,
           }),
         ),
-        getDynamicWeatherForecast({
-          locationId: loc.id,
-          taluk,
-          savedCropIds,
-        }).catch(() => null),
+        withTimeout(
+          getDynamicWeatherForecast({
+            locationId: loc.id,
+            state,
+            district,
+            taluk,
+            savedCropIds,
+          }),
+          14000,
+          'Weather lookup',
+        ).catch(() => null),
       ]);
 
-      // Build compact verified payload for Gemini
       const savedCropsPayload = savedCropIds.map((cropId) => {
         const meta = CROP_CATALOG_META.find((m) => m.id === cropId);
         const obs = marketFeed.observations[cropId];
         return {
           crop: meta?.name || cropId,
           category: meta?.category || 'vegetable',
-          variety: obs?.variety || meta?.defaultVariety || 'Standard',
-          modalPricePerKg: obs ? obs.modalPriceKg : meta?.referenceModalKg ?? null,
-          modalPricePerQuintal: obs ? obs.modalPriceQuintal : (meta?.referenceModalKg ?? 0) * 100,
+          verifiedOnline: Boolean(obs),
+          modalPricePerKg: obs ? obs.modalPriceKg : null,
+          modalPricePerQuintal: obs ? obs.modalPriceQuintal : null,
           changePercent: obs?.priceChangePercent ?? null,
-          market: obs?.market || preferredMandi || 'Reference baseline',
-          dataStatus: obs ? obs.sourceStatus : 'catalog_reference',
+          market: obs?.market || null,
+          observationDate: obs?.arrivalDate || null,
+          sourceName: obs?.sourceName || null,
         };
       });
 
-      const allObs = Object.values(marketFeed.observations);
-      const vegMovers = allObs
-        .filter((o) => {
-          const meta = CROP_CATALOG_META.find((m) => m.id === o.cropId);
-          return meta?.category === 'vegetable';
-        })
-        .sort((a, b) => Math.abs(b.priceChangePercent ?? 0) - Math.abs(a.priceChangePercent ?? 0))
-        .slice(0, 3)
+      const verifiedHighlights = Object.values(marketFeed.observations)
+        .slice(0, 4)
         .map((o) => ({
           crop: o.commodity,
           modalPricePerKg: o.modalPriceKg,
-          changePercent: o.priceChangePercent,
+          modalPricePerQuintal: o.modalPriceQuintal,
           market: o.market,
-        }));
-
-      const fruitMovers = allObs
-        .filter((o) => {
-          const meta = CROP_CATALOG_META.find((m) => m.id === o.cropId);
-          return meta?.category === 'fruit';
-        })
-        .sort((a, b) => Math.abs(b.priceChangePercent ?? 0) - Math.abs(a.priceChangePercent ?? 0))
-        .slice(0, 3)
-        .map((o) => ({
-          crop: o.commodity,
-          modalPricePerKg: o.modalPriceKg,
-          changePercent: o.priceChangePercent,
-          market: o.market,
+          observationDate: o.arrivalDate,
+          sourceName: o.sourceName,
         }));
 
       const compactPayload = {
@@ -170,18 +193,15 @@ export async function generatePersonalizedDailyBriefing(
         marketDataStatus: {
           status: marketFeed.status.sourceStatus,
           observationDate: marketFeed.status.observationDate,
-          isStale: marketFeed.status.isStale,
+          verifiedCropCount: verifiedHighlights.length,
           note:
-            marketFeed.status.sourceStatus === 'catalog_reference'
-              ? 'Live AGMARKNET mandi sync is not configured yet; prices shown are reference baselines, NOT today live auction prices. Explicitly mention this honestly if quoting any prices.'
-              : marketFeed.status.isStale
-                ? 'Market prices are from the last verified cached AGMARKNET observation.'
-                : 'Live AGMARKNET mandi data verified.',
+            verifiedHighlights.length > 0
+              ? 'Prices below were retrieved online via Gemini Google Search grounding with cited mandi sources.'
+              : 'Latest verified market price is currently unavailable for the tracked crops. State this honestly without inventing any price numbers.',
         },
         farmerSavedCropsCount: savedCropsPayload.length,
         farmerSavedCrops: savedCropsPayload,
-        regionalVegetableHighlights: vegMovers,
-        regionalFruitHighlights: fruitMovers,
+        verifiedRegionalHighlights: verifiedHighlights,
         weather: weatherResult
           ? {
               source: weatherResult.sourceLabel,
@@ -201,6 +221,7 @@ export async function generatePersonalizedDailyBriefing(
               })),
               activeAlerts: weatherResult.alerts.slice(0, 2).map((a) => ({
                 sourceType: a.sourceType,
+                sourceName: a.sourceName,
                 title: a.title,
                 action: a.action,
               })),
@@ -217,11 +238,12 @@ export async function generatePersonalizedDailyBriefing(
       const systemInstruction = `You are KRISHI-MITHRA, a warm, trustworthy agricultural companion for Indian farmers.
 Speak clearly in plain, natural ${targetLang} suitable for a 35 to 55 second voice briefing (about 85 to 125 words).
 Greet the farmer by name (${cleanName}) using the provided time-of-day greeting.
-Use ONLY the supplied verified market, weather, and advisory facts. Never invent prices, weather numbers, or claims.
-If the farmer has saved crops, highlight them first; if 0 crops are saved, briefly encourage selecting crops in the Marketplace while summarizing regional status.
-If live AGMARKNET market data is not yet synced or is stale, state that honestly and briefly without claiming reference prices are live today.
-Mention today's real weather, any important rain/heat/wind warning, and one concise practical field recommendation.
-Keep sentences short, clear, and calm. No markdown, no bullet symbols, no emojis, no filler.`;
+Use ONLY the supplied verified market, weather, and advisory facts. Never invent prices, dates, or weather numbers.
+If verified online mandi prices exist for the farmer's saved crops, quote them with their market name and observation date.
+If a crop has verifiedOnline: false or no verified prices are available, explicitly say that the latest verified market price is currently unavailable without making up numbers.
+If 0 crops are saved, briefly encourage adding crops from the Marketplace.
+Distinguish official weather alerts from general guidance and include one clear field recommendation.
+Keep sentences short, calm, and spoken naturally. No markdown, no bullet symbols, no emojis.`;
 
       const userPrompt = `Generate today's spoken farmer briefing strictly in ${targetLang} from this verified JSON data:\n${JSON.stringify(compactPayload)}`;
 
@@ -229,55 +251,67 @@ Keep sentences short, clear, and calm. No markdown, no bullet symbols, no emojis
       let audioError: string | null = null;
 
       try {
-        const textRes = await ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
-          contents: userPrompt,
-          config: {
-            thinkingConfig: {thinkingLevel: ThinkingLevel.LOW},
-            systemInstruction,
-          },
-        });
-        briefingText = (textRes.text || '').trim().replace(/\s+/g, ' ');
-      } catch (primaryErr: unknown) {
-        console.warn(
-          'Primary briefing model unavailable, attempting fallback model:',
-          primaryErr instanceof Error ? primaryErr.message : primaryErr,
-        );
-        try {
-          const fallbackRes = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite',
+        const textRes = await withTimeout(
+          ai.models.generateContent({
+            model: 'gemini-4-hydrogen',
             contents: userPrompt,
             config: {
+              thinkingConfig: {thinkingLevel: ThinkingLevel.LOW},
               systemInstruction,
             },
-          });
-          briefingText = (fallbackRes.text || '').trim().replace(/\s+/g, ' ');
-        } catch (fallbackErr: unknown) {
-          console.warn(
-            'Secondary Gemini briefing model unavailable, using verified structured briefing:',
-            fallbackErr instanceof Error ? fallbackErr.message : fallbackErr,
+          }),
+          10000,
+          'Briefing text (gemini-4-hydrogen)',
+        );
+        briefingText = (textRes.text || '').trim().replace(/\s+/g, ' ');
+      } catch {
+        try {
+          const fallbackRes = await withTimeout(
+            ai.models.generateContent({
+              model: 'gemini-3.1-flash-lite',
+              contents: userPrompt,
+              config: {
+                systemInstruction,
+              },
+            }),
+            10000,
+            'Briefing text (gemini-3.1-flash-lite)',
           );
-          const weatherSentence = weatherResult
-            ? `In ${district}, it is currently ${weatherResult.currentTemperature} degrees Celsius with ${weatherResult.condition.toLowerCase()} skies and a ${weatherResult.rainProbability} percent chance of rain. ${weatherResult.advisories[0]?.recommendation || ''}`
-            : `Live weather data for ${district} is temporarily unavailable right now.`;
-          const cropSentence =
-            savedCropsPayload.length > 0
-              ? `You are tracking ${savedCropsPayload.length} crops including ${savedCropsPayload
-                  .slice(0, 3)
-                  .map((c) => c.crop)
-                  .join(', ')}.`
-              : `You have not selected any crops yet. Visit the Marketplace to add your vegetables and fruits for personalized tracking.`;
+          briefingText = (fallbackRes.text || '').trim().replace(/\s+/g, ' ');
+        } catch {
+          const weatherParts: string[] = [];
+          if (weatherResult) {
+            if (weatherResult.currentTemperature !== null) {
+              weatherParts.push(`currently ${weatherResult.currentTemperature} degrees Celsius`);
+            }
+            if (weatherResult.condition) {
+              weatherParts.push(`with ${weatherResult.condition.toLowerCase()} conditions`);
+            }
+            if (weatherResult.rainProbability !== null) {
+              weatherParts.push(`and a ${weatherResult.rainProbability} percent chance of rain`);
+            }
+          }
+          const weatherSentence =
+            weatherResult && weatherParts.length > 0
+              ? `In ${district}, it is ${weatherParts.join(' ')}. ${weatherResult.advisories[0]?.recommendation || ''}`
+              : `Live weather data for ${district} is temporarily unavailable right now.`;
+          const verifiedSaved = savedCropsPayload.filter((c) => c.verifiedOnline && c.modalPricePerKg);
           const marketSentence =
-            marketFeed.status.sourceStatus === 'live_agmarknet'
-              ? `Live AGMARKNET mandi rates are active as of ${marketFeed.status.observationDate || 'today'}.`
-              : `Live AGMARKNET mandi sync is not yet configured on this server, so catalog reference prices are currently shown.`;
+            verifiedSaved.length > 0
+              ? `Latest verified mandi rates show ${verifiedSaved
+                  .slice(0, 2)
+                  .map((c) => `${c.crop} at ${c.modalPricePerKg} rupees per kg in ${c.market}`)
+                  .join(', ')}.`
+              : savedCropsPayload.length > 0
+                ? 'Latest verified market prices for your saved crops are currently unavailable.'
+                : 'Add your vegetables and fruits in the Marketplace to receive live crop-specific mandi updates.';
 
-          briefingText = `${getTimeGreeting()}, ${cleanName}. ${weatherSentence} ${cropSentence} ${marketSentence}`.replace(
+          briefingText = `${getTimeGreeting()}, ${cleanName}. ${weatherSentence} ${marketSentence}`.replace(
             /\s+/g,
             ' ',
           );
           audioError =
-            'Gemini AI is momentarily busy; briefing prepared from verified live weather and farm data.';
+            'Gemini AI is momentarily busy; briefing prepared from verified live weather and grounded records.';
         }
       }
 
@@ -285,35 +319,38 @@ Keep sentences short, clear, and calm. No markdown, no bullet symbols, no emojis
         throw new Error('Briefing generator returned empty text.');
       }
 
-      // Generate fast single-speaker audio via gemini-3.8-flash-lite-tts
       let audioBase64: string | null = null;
       let mimeType: string | null = null;
 
       try {
-        const ttsRes = await ai.models.generateContent({
-          model: 'gemini-3.8-flash-lite-tts',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text: briefingText.slice(0, 1400),
-                  speechMetadata: {
-                    style: 'Warm, clear, calm agricultural advisor',
+        const ttsRes = await withTimeout(
+          ai.models.generateContent({
+            model: 'gemini-3.8-flash-lite-tts',
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: briefingText.slice(0, 1400),
+                    speechMetadata: {
+                      style: 'Warm, clear, calm agricultural advisor',
+                    },
                   },
+                ],
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {voiceName: 'Kore'},
                 },
-              ],
-            },
-          ],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {voiceName: 'Kore'},
               },
             },
-          },
-        });
+          }),
+          8000,
+          'Briefing TTS',
+        );
 
         const audioPart = ttsRes.candidates?.[0]?.content?.parts?.[0];
         if (audioPart?.inlineData?.data) {
@@ -322,11 +359,7 @@ Keep sentences short, clear, and calm. No markdown, no bullet symbols, no emojis
         } else if (!audioError) {
           audioError = 'Cloud voice synthesis unavailable; playing with browser voice.';
         }
-      } catch (ttsErr: unknown) {
-        console.error(
-          'Briefing TTS error:',
-          ttsErr instanceof Error ? ttsErr.message : ttsErr,
-        );
+      } catch {
         if (!audioError) {
           audioError = 'Cloud voice synthesis unavailable right now; playing with browser voice.';
         }
@@ -347,7 +380,6 @@ Keep sentences short, clear, and calm. No markdown, no bullet symbols, no emojis
         },
       };
 
-      // Cache successful text+audio responses (prune cache if > 60 entries)
       if (briefingCache.size >= 60) {
         const firstKey = briefingCache.keys().next().value;
         if (firstKey) briefingCache.delete(firstKey);

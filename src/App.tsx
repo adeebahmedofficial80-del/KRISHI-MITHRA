@@ -1,5 +1,5 @@
 import {Loader2} from 'lucide-react';
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {AppLayout} from './components/AppLayout';
 import {AuthGateScreen} from './components/AuthGateScreen';
 import {GrandOpeningScreen} from './components/GrandOpeningScreen';
@@ -18,8 +18,9 @@ import {LocationProfilePatch, useKrishiStore} from './hooks/useKrishiStore';
 import {
   DEFAULT_MARKET_SYNC_STATUS,
   fetchDynamicMarketFeed,
+  fetchSingleCropLivePrice,
   mergeMarketObservations,
-  triggerMarketSync,
+  triggerGeminiMarketSync,
 } from './services/marketProvider';
 import {weatherProvider} from './services/weatherProvider';
 import {
@@ -51,12 +52,13 @@ export default function App() {
   const [weatherLoading, setWeatherLoading] = useState<boolean>(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
 
-  // Dynamic AGMARKNET Market feed state
+  // Dynamic Gemini Google Search Grounding Market feed state
   const [marketFeed, setMarketFeed] = useState<MarketFeedResponse>({
     status: DEFAULT_MARKET_SYNC_STATUS,
     observations: {},
   });
   const [marketSyncing, setMarketSyncing] = useState<boolean>(false);
+  const [fetchingCropId, setFetchingCropId] = useState<string | null>(null);
 
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState<boolean>(false);
 
@@ -91,14 +93,47 @@ export default function App() {
       store.farmerProfile.hasSeenGrandOpening,
   );
 
-  // Load dynamic market prices from backend AGMARKNET pipeline
+  const savedState = store.farmerProfile?.state || store.selectedLocation.state;
+  const savedDistrict = store.farmerProfile?.district || store.selectedLocation.district;
+  const savedTaluk = store.farmerProfile?.taluk || store.selectedLocation.taluks[0] || '';
+  const savedLocationKey = `${store.selectedLocation.id}|${savedState}|${savedDistrict}|${savedTaluk}`;
+
+  // Keep latest saved crops & alert preferences in refs so toggling a favorite or checkbox
+  // does not trigger redundant Gemini Search weather requests.
+  const favoriteCropIdsRef = useRef<string[]>(store.favoriteCropIds);
+  const alertPrefsRef = useRef(store.alertPrefs);
+  const selectedLocationRef = useRef(store.selectedLocation);
+  const lastWeatherLocationKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    favoriteCropIdsRef.current = store.favoriteCropIds;
+  }, [store.favoriteCropIds]);
+
+  useEffect(() => {
+    alertPrefsRef.current = store.alertPrefs;
+  }, [store.alertPrefs]);
+
+  useEffect(() => {
+    selectedLocationRef.current = store.selectedLocation;
+  }, [store.selectedLocation]);
+
+  // Auto-fetch Gemini-grounded prices for saved crops (and hydrate cached archive)
+  const savedCropsKey = store.favoriteCropIds.slice(0, 6).join(',');
+
   const loadMarketFeed = useCallback(async () => {
     if (!isAuthenticatedAndReady) return;
+    const savedIds = savedCropsKey ? savedCropsKey.split(',') : [];
+    const shouldAutoFetch = savedIds.length > 0;
+    if (shouldAutoFetch) {
+      setMarketSyncing(true);
+    }
     try {
       const feed = await fetchDynamicMarketFeed({
-        state: store.farmerProfile?.state || store.selectedLocation.state,
-        district: store.selectedLocation.district,
+        state: savedState,
+        district: savedDistrict,
         preferredMandi: store.farmerProfile?.preferredMandi,
+        cropIds: savedIds,
+        autoFetch: shouldAutoFetch,
       });
       setMarketFeed(feed);
     } catch {
@@ -106,19 +141,23 @@ export default function App() {
         ...prev,
         status: {
           ...prev.status,
-          sourceStatus: 'catalog_reference',
-          sourceLabel: 'Reference Catalog (Market server unreachable)',
+          sourceStatus: 'unavailable',
+          sourceLabel: 'Latest verified market price is currently unavailable.',
           isStale: true,
           staleReason: 'Unable to reach /api/market/prices right now.',
         },
       }));
+    } finally {
+      if (shouldAutoFetch) {
+        setMarketSyncing(false);
+      }
     }
   }, [
     isAuthenticatedAndReady,
-    store.farmerProfile?.state,
+    savedCropsKey,
+    savedState,
+    savedDistrict,
     store.farmerProfile?.preferredMandi,
-    store.selectedLocation.state,
-    store.selectedLocation.district,
   ]);
 
   useEffect(() => {
@@ -128,56 +167,143 @@ export default function App() {
   const handleRefreshMarket = useCallback(async () => {
     setMarketSyncing(true);
     try {
-      const state = store.farmerProfile?.state || store.selectedLocation.state;
-      const synced = await triggerMarketSync(state);
+      const preferredMandi = store.farmerProfile?.preferredMandi;
+      const cropIds =
+        store.favoriteCropIds.length > 0
+          ? store.favoriteCropIds.slice(0, 6)
+          : ['tomato', 'onion', 'potato', 'banana'];
+
+      const synced = await triggerGeminiMarketSync({
+        state: savedState,
+        district: savedDistrict,
+        preferredMandi,
+        cropIds,
+        forceRefresh: true,
+      });
       setMarketFeed(synced);
-      if (synced.status.sourceStatus === 'live_agmarknet') {
+      const verifiedCount = Object.keys(synced.observations).length;
+      if (verifiedCount > 0) {
         setToastMessage(
-          `Synced ${synced.status.matchedCropCount} live AGMARKNET crop rates.`,
+          `Verified live online prices for ${verifiedCount} ${verifiedCount === 1 ? 'crop' : 'crops'} via Gemini Search.`,
         );
       } else {
-        setToastMessage(synced.status.sourceLabel);
+        setToastMessage(
+          synced.status.staleReason || 'Latest verified market price is currently unavailable.',
+        );
       }
     } catch (err: unknown) {
-      setToastMessage(getErrorMessage(err, 'Unable to refresh AGMARKNET prices right now.'));
+      setToastMessage(
+        getErrorMessage(err, 'Unable to fetch live market prices via Gemini Search right now.'),
+      );
     } finally {
       setMarketSyncing(false);
     }
-  }, [store.farmerProfile?.state, store.selectedLocation.state]);
+  }, [
+    savedState,
+    savedDistrict,
+    store.farmerProfile?.preferredMandi,
+    store.favoriteCropIds,
+  ]);
 
-  // Load live weather forecast & crop-sensitive advisories
+  const handleFetchSingleCropPrice = useCallback(
+    async (cropId: string, forceRefresh = true) => {
+      setFetchingCropId(cropId);
+      try {
+        const synced = await fetchSingleCropLivePrice({
+          cropId,
+          state: savedState,
+          district: savedDistrict,
+          preferredMandi: store.farmerProfile?.preferredMandi,
+          forceRefresh,
+        });
+        setMarketFeed(synced);
+        const obs = synced.observations[cropId];
+        const crop = CROP_PRODUCTS.find((p) => p.id === cropId);
+        const cropName = t.cropNames[cropId] || crop?.name || cropId;
+        if (obs) {
+          setToastMessage(
+            `Verified ${cropName}: ₹${obs.modalPriceKg}/kg at ${obs.market} (${obs.arrivalDate}).`,
+          );
+        } else {
+          setToastMessage(
+            `Latest verified market price is currently unavailable for ${cropName}.`,
+          );
+        }
+      } catch (err: unknown) {
+        setToastMessage(
+          getErrorMessage(err, 'Unable to retrieve live price via Gemini Search right now.'),
+        );
+      } finally {
+        setFetchingCropId(null);
+      }
+    },
+    [
+      savedState,
+      savedDistrict,
+      store.farmerProfile?.preferredMandi,
+      t.cropNames,
+    ],
+  );
+
+  // Load Gemini Search grounded weather ONLY on login, location change, or explicit manual refresh
   const loadWeather = useCallback(
     async (forceRefresh = false) => {
       if (!isAuthenticatedAndReady) return;
+      const locChanged = lastWeatherLocationKeyRef.current !== savedLocationKey;
+      lastWeatherLocationKeyRef.current = savedLocationKey;
+
+      if (locChanged) {
+        const cachedForNewLoc = weatherProvider.getCachedForecast(selectedLocationRef.current, {
+          state: savedState,
+          district: savedDistrict,
+          taluk: savedTaluk,
+        });
+        setWeather(cachedForNewLoc);
+      }
+
       setWeatherLoading(true);
       setWeatherError(null);
       try {
         const snapshot = await weatherProvider.getForecast(
-          store.selectedLocation,
-          store.alertPrefs,
+          selectedLocationRef.current,
+          alertPrefsRef.current,
           {
-            taluk: store.farmerProfile?.taluk,
-            savedCropIds: store.favoriteCropIds,
+            state: savedState,
+            district: savedDistrict,
+            taluk: savedTaluk,
+            savedCropIds: favoriteCropIdsRef.current,
             forceRefresh,
           },
         );
         setWeather(snapshot);
+        if (forceRefresh && snapshot.source === 'live') {
+          setToastMessage(`Updated weather for ${snapshot.locationName} (${snapshot.updatedAt}).`);
+        } else if (forceRefresh && snapshot.isStale && snapshot.staleReason) {
+          setToastMessage(snapshot.staleReason);
+        }
       } catch (err: unknown) {
-        setWeather(null);
-        setWeatherError(
-          getErrorMessage(err, 'Live weather service is currently unavailable.'),
+        const msg = getErrorMessage(
+          err,
+          'Live weather retrieval via Gemini Search is currently unavailable.',
         );
+        setWeatherError(msg);
+        // Preserve previous verified weather for this same location with explicit stale indicator;
+        // never fabricate or wipe verified data on a failed refresh.
+        setWeather((prev) => {
+          if (!prev || locChanged) return null;
+          return {
+            ...prev,
+            source: 'cached',
+            officialProvider: 'cached_gemini_google_search',
+            isStale: true,
+            staleReason: `${msg} Showing previous verified forecast from ${prev.observationDate || prev.updatedAt}.`,
+          };
+        });
       } finally {
         setWeatherLoading(false);
       }
     },
-    [
-      isAuthenticatedAndReady,
-      store.selectedLocation,
-      store.alertPrefs,
-      store.farmerProfile?.taluk,
-      store.favoriteCropIds,
-    ],
+    [isAuthenticatedAndReady, savedLocationKey, savedState, savedDistrict, savedTaluk],
   );
 
   useEffect(() => {
@@ -265,9 +391,9 @@ export default function App() {
       void audio.playDailyBriefing({
         farmerName: store.farmerName,
         locationId: store.selectedLocation.id,
-        state: store.farmerProfile?.state || store.selectedLocation.state,
-        district: store.selectedLocation.district,
-        taluk: store.farmerProfile?.taluk,
+        state: savedState,
+        district: savedDistrict,
+        taluk: savedTaluk,
         preferredMandi: store.farmerProfile?.preferredMandi,
         savedCropIds: store.favoriteCropIds,
         language: store.selectedLanguage,
@@ -278,10 +404,9 @@ export default function App() {
       audio,
       store.farmerName,
       store.selectedLocation.id,
-      store.selectedLocation.state,
-      store.selectedLocation.district,
-      store.farmerProfile?.state,
-      store.farmerProfile?.taluk,
+      savedState,
+      savedDistrict,
+      savedTaluk,
       store.farmerProfile?.preferredMandi,
       store.favoriteCropIds,
       store.selectedLanguage,
@@ -432,7 +557,9 @@ export default function App() {
             products={products}
             marketStatus={marketFeed.status}
             marketSyncing={marketSyncing}
+            fetchingCropId={fetchingCropId}
             onRefreshMarket={() => void handleRefreshMarket()}
+            onFetchCropPrice={(cropId) => void handleFetchSingleCropPrice(cropId, true)}
             weather={weather}
             weatherLoading={weatherLoading}
             weatherError={weatherError}
@@ -465,7 +592,9 @@ export default function App() {
             products={products}
             marketStatus={marketFeed.status}
             marketSyncing={marketSyncing}
+            fetchingCropId={fetchingCropId}
             onRefreshMarket={() => void handleRefreshMarket()}
+            onFetchCropPrice={(cropId) => void handleFetchSingleCropPrice(cropId, true)}
             selectedCropId={selectedCropId}
             onSelectCrop={setSelectedCropId}
             favoriteCropIds={store.favoriteCropIds}
@@ -504,6 +633,8 @@ export default function App() {
             t={t}
             products={products}
             marketStatus={marketFeed.status}
+            fetchingCropId={fetchingCropId}
+            onFetchCropPrice={(cropId) => void handleFetchSingleCropPrice(cropId, true)}
             favoriteCropIds={store.favoriteCropIds}
             priceAlerts={store.priceAlerts}
             onToggleFavorite={handleToggleFavorite}

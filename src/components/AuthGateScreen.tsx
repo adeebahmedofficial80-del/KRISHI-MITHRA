@@ -24,7 +24,8 @@ function formatAuthError(err: unknown): string {
     return 'Network connection interrupted during sign-in. Please check your internet and retry.';
   }
   if (msg.includes('unauthorized-domain')) {
-    return 'This preview domain is not yet authorized in Firebase Auth settings.';
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'this preview host';
+    return `Domain "${host}" is not authorized in Firebase Authentication settings. Please add it under Authorized Domains in Firebase Console.`;
   }
   return msg || 'Unable to sign in with Google right now. Please try again.';
 }
@@ -134,7 +135,7 @@ export function AuthGateScreen({
                 <Sprout className="w-5 h-5 text-[#245C3A] mb-2" />
                 <p className="text-xs font-semibold text-[#202820]">44+ Indian Crops</p>
                 <p className="text-[11px] text-[#5B675B] mt-0.5 leading-snug">
-                  Track vegetables & fruits you actually grow with AGMARKNET sync.
+                  Track vegetables & fruits you actually grow with Gemini Search live mandi sync.
                 </p>
               </div>
               <div className="bg-white border border-[#E2E6DC] rounded-2xl p-3.5">

@@ -1,7 +1,12 @@
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   ArrowUpRight,
+  Cloud,
+  CloudFog,
+  CloudLightning,
+  CloudRain,
   CloudSun,
   Info,
   Loader2,
@@ -11,6 +16,7 @@ import {
   ShieldAlert,
   Sprout,
   Store,
+  Sun,
   Volume2,
   X,
 } from 'lucide-react';
@@ -18,7 +24,10 @@ import {useMemo, useState} from 'react';
 import {Line, LineChart, ResponsiveContainer} from 'recharts';
 import {getTimeBasedGreeting, TranslationPack} from '../data/translations';
 import {AudioPlaybackStatus} from '../hooks/useAudioPlayer';
-import {getMarketComparisonForProduct} from '../services/marketProvider';
+import {
+  getMarketComparisonForProduct,
+  UNAVAILABLE_PRICE_MESSAGE,
+} from '../services/marketProvider';
 import {
   CropProduct,
   DailyBriefingResponse,
@@ -32,6 +41,7 @@ import {
 } from '../types/krishi';
 import {BriefingPlayerBar} from './BriefingPlayerBar';
 import {CropImage} from './CropImage';
+import {PlantingCalendar} from './PlantingCalendar';
 
 interface HomeDashboardProps {
   t: TranslationPack;
@@ -44,7 +54,9 @@ interface HomeDashboardProps {
   products: CropProduct[];
   marketStatus: MarketSyncStatus;
   marketSyncing: boolean;
+  fetchingCropId: string | null;
   onRefreshMarket: () => void;
+  onFetchCropPrice: (cropId: string) => void;
   weather: WeatherSnapshot | null;
   weatherLoading: boolean;
   weatherError: string | null;
@@ -75,7 +87,9 @@ export function HomeDashboard({
   products,
   marketStatus,
   marketSyncing,
+  fetchingCropId,
   onRefreshMarket,
+  onFetchCropPrice,
   weather,
   weatherLoading,
   weatherError,
@@ -116,18 +130,22 @@ export function HomeDashboard({
     [effectiveCompareCrop, location],
   );
 
-  // Regional market highlights (broader regional snapshot, clearly separated from personal tracked crops)
+  // Regional market highlights — prioritize verified Gemini-grounded crops, else staple slots
   const regionalHighlights = useMemo(() => {
-    const liveWithMovement = products.filter((p) => !p.isDemo && p.hasComparableHistory);
-    if (liveWithMovement.length >= 4) {
-      return [...liveWithMovement]
-        .sort((a, b) => Math.abs(b.priceChangePercent) - Math.abs(a.priceChangePercent))
-        .slice(0, 4);
+    const verifiedCrops = products.filter((p) => p.hasVerifiedPrice);
+    if (verifiedCrops.length >= 4) {
+      return verifiedCrops.slice(0, 4);
     }
     const stapleIds = ['tomato', 'onion', 'potato', 'banana'];
-    return stapleIds
-      .map((id) => products.find((p) => p.id === id))
-      .filter((c): c is CropProduct => Boolean(c));
+    const result = [...verifiedCrops];
+    for (const id of stapleIds) {
+      if (result.length >= 4) break;
+      const found = products.find((p) => p.id === id);
+      if (found && !result.some((r) => r.id === found.id)) {
+        result.push(found);
+      }
+    }
+    return result;
   }, [products]);
 
   const greeting = getTimeBasedGreeting(language, farmerName);
@@ -139,15 +157,37 @@ export function HomeDashboard({
     .filter(Boolean)
     .join(', ');
 
-  const rainProb = weather?.rainProbability;
-  const rainSummaryText =
-    rainProb === undefined
-      ? ''
-      : rainProb >= 60
-        ? t.highRainChance
-        : rainProb >= 35
-          ? t.moderateRainChance
-          : t.lowRainChance;
+  const activeWeatherWarning = useMemo(() => {
+    if (!weather?.alerts?.length) return null;
+    return (
+      weather.alerts.find(
+        (a) =>
+          a.sourceType === 'official_imd' ||
+          a.sourceType === 'official_grounded' ||
+          a.severity === 'High',
+      ) || null
+    );
+  }, [weather]);
+
+  const renderCompactWeatherIcon = (condition?: string | null, rainProbVal?: number | null) => {
+    const c = (condition || '').toLowerCase();
+    if (c.includes('thunder') || c.includes('storm') || c.includes('lightning')) {
+      return <CloudLightning className="w-4 h-4 text-amber-600 mx-auto" />;
+    }
+    if (c.includes('rain') || c.includes('shower') || c.includes('drizzle') || (rainProbVal !== null && rainProbVal !== undefined && rainProbVal >= 60)) {
+      return <CloudRain className="w-4 h-4 text-[#5A91C8] mx-auto" />;
+    }
+    if (c.includes('fog') || c.includes('mist') || c.includes('haze')) {
+      return <CloudFog className="w-4 h-4 text-[#6B756A] mx-auto" />;
+    }
+    if (c.includes('overcast') || c === 'cloudy') {
+      return <Cloud className="w-4 h-4 text-[#6B756A] mx-auto" />;
+    }
+    if (c.includes('sun') || c.includes('clear')) {
+      return <Sun className="w-4 h-4 text-amber-500 mx-auto" />;
+    }
+    return <CloudSun className="w-4 h-4 text-[#245C3A] mx-auto" />;
+  };
 
   const advisoryCount = weather?.advisories?.length ?? 0;
   const activeAlertsCount = priceAlerts.filter((a) => a.enabled).length;
@@ -270,41 +310,103 @@ export function HomeDashboard({
           </p>
         </button>
 
-        {/* Card 2: Today's Real Weather */}
-        <button
-          type="button"
+        {/* Card 2: Today's Real Weather (Gemini Google Search Grounded) */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => onNavigate('weather')}
-          className="bg-white border border-[#E4E9E0] rounded-2xl p-4 text-left hover:border-[#245C3A] transition-colors cursor-pointer"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onNavigate('weather');
+            }
+          }}
+          className="bg-white border border-[#E4E9E0] rounded-2xl p-4 text-left hover:border-[#245C3A] transition-colors cursor-pointer flex flex-col justify-between"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#6B756A]">
               {t.todaysWeather}
             </span>
-            <CloudSun className="w-4 h-4 text-[#5A91C8]" />
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={weatherLoading}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetryWeather();
+                }}
+                aria-label="Refresh weather"
+                title="Refresh weather"
+                className="p-1 rounded-lg text-[#6B756A] hover:text-[#245C3A] hover:bg-[#EAF3E8] disabled:opacity-50 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${weatherLoading ? 'animate-spin' : ''}`} />
+              </button>
+              <CloudSun className="w-4 h-4 text-[#5A91C8]" />
+            </div>
           </div>
+
           {weatherLoading && !weather ? (
-            <>
-              <p className="mt-2 font-mono text-2xl font-bold text-[#6B756A]">Loading...</p>
-              <p className="mt-1 text-xs text-[#6B756A]">Fetching live local weather</p>
-            </>
+            <div className="mt-2 space-y-1">
+              <p className="font-mono text-xl font-bold text-[#6B756A] flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-[#245C3A]" />
+                <span>Searching...</span>
+              </p>
+              <p className="text-xs text-[#6B756A]">Retrieving live weather via Gemini Search</p>
+            </div>
           ) : weather ? (
-            <>
-              <p className="mt-2 font-mono text-2xl font-bold text-[#202820] tabular-nums">
-                {weather.currentTemperature}°C
+            <div className="mt-1.5 space-y-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
+                  {weather.currentTemperature !== null
+                    ? `${weather.currentTemperature}°C`
+                    : 'Unavailable'}
+                </p>
+                {(weather.todayMinTemp !== null || weather.todayMaxTemp !== null) && (
+                  <span className="font-mono text-[11px] font-medium text-[#5B675B] tabular-nums">
+                    Forecast:{' '}
+                    {weather.todayMinTemp !== null ? `${weather.todayMinTemp}°` : '—'}–
+                    {weather.todayMaxTemp !== null ? `${weather.todayMaxTemp}°C` : '—'}
+                  </span>
+                )}
+              </div>
+
+              <p className="text-xs font-semibold text-[#245C3A] truncate">
+                {weather.condition || weather.todayForecastCondition || 'Condition unavailable'}
               </p>
-              <p className="mt-1 text-xs text-[#6B756A] tabular-nums truncate">
-                {rainSummaryText} · {weather.rainProbability}% · {weather.updatedAt}
+
+              <p className="text-[11px] text-[#3C483C] tabular-nums">
+                Rain Probability:{' '}
+                <span className="font-mono font-semibold">
+                  {weather.rainProbability !== null ? `${weather.rainProbability}%` : 'Unavailable'}
+                </span>{' '}
+                · Humidity:{' '}
+                <span className="font-mono font-semibold">
+                  {weather.humidity !== null ? `${weather.humidity}%` : 'Unavailable'}
+                </span>
               </p>
-            </>
+
+              {activeWeatherWarning && (
+                <p className="text-[11px] font-semibold text-amber-800 flex items-center gap-1 truncate">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{activeWeatherWarning.title}</span>
+                </p>
+              )}
+
+              <p className="text-[10px] text-[#6B756A] truncate pt-0.5">
+                {weather.isStale ? 'Cached · ' : ''}
+                {weather.updatedAt}
+                {weather.primarySourceName ? ` · ${weather.primarySourceName}` : ''}
+              </p>
+            </div>
           ) : (
-            <>
-              <p className="mt-2 text-base font-bold text-amber-800">Unavailable</p>
-              <p className="mt-1 text-xs text-[#6B756A] truncate">
-                {weatherError || 'Tap to retry live weather'}
+            <div className="mt-2 space-y-1">
+              <p className="text-base font-bold text-amber-800">Weather Unavailable</p>
+              <p className="text-xs text-[#6B756A] line-clamp-2">
+                {weatherError || 'Tap refresh to retrieve live weather via Gemini Search.'}
               </p>
-            </>
+            </div>
           )}
-        </button>
+        </div>
 
         {/* Card 3: Real Farm Advisory Count */}
         <button
@@ -408,29 +510,42 @@ export function HomeDashboard({
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-[#202820] truncate">{name}</p>
                     <p className="text-xs text-[#6B756A] truncate">
-                      {t.marketNames[crop.marketId] || crop.market}
+                      {crop.hasVerifiedPrice
+                        ? t.marketNames[crop.marketId] || crop.market
+                        : UNAVAILABLE_PRICE_MESSAGE}
                     </p>
-                    <p className="text-[11px] text-[#6B756A]">
-                      {crop.isDemo ? 'Reference baseline' : `Observed ${crop.updatedAt}`}
-                    </p>
+                    {crop.hasVerifiedPrice && (
+                      <p className="text-[11px] text-[#6B756A] truncate">
+                        {crop.observationDate || crop.updatedAt}
+                        {crop.sourceName ? ` · ${crop.sourceName}` : ''}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-mono text-base font-bold text-[#202820] tabular-nums">
-                      ₹{crop.modalPrice}/kg
-                    </p>
-                    {crop.hasComparableHistory && !crop.isDemo ? (
-                      <p
-                        className={`font-mono text-xs font-semibold tabular-nums ${
-                          positive ? 'text-[#245C3A]' : 'text-amber-700'
-                        }`}
-                      >
-                        {positive ? '+' : ''}
-                        {crop.priceChangePercent}%
-                      </p>
+                    {crop.hasVerifiedPrice ? (
+                      <>
+                        <p className="font-mono text-base font-bold text-[#202820] tabular-nums">
+                          ₹{crop.modalPrice}/kg
+                        </p>
+                        {crop.hasComparableHistory ? (
+                          <p
+                            className={`font-mono text-xs font-semibold tabular-nums ${
+                              positive ? 'text-[#245C3A]' : 'text-amber-700'
+                            }`}
+                          >
+                            {positive ? '+' : ''}
+                            {crop.priceChangePercent}%
+                          </p>
+                        ) : (
+                          <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">
+                            ₹{crop.modalPriceQuintal ?? Math.round(crop.modalPrice * 100)}/qtl
+                          </p>
+                        )}
+                      </>
                     ) : (
-                      <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">
-                        ₹{crop.modalPriceQuintal ?? crop.modalPrice * 100}/qtl
-                      </p>
+                      <span className="text-[11px] font-semibold text-[#245C3A]">
+                        Fetch Live →
+                      </span>
                     )}
                   </div>
                 </button>
@@ -440,7 +555,17 @@ export function HomeDashboard({
         )}
       </section>
 
-      {/* Regional Market Overview (Clearly labeled with AGMARKNET sync status) */}
+      {/* Interactive 12-Month Planting & Harvesting Calendar with Weather Readiness */}
+      <PlantingCalendar
+        savedCrops={monitoredCrops}
+        allProducts={products}
+        weather={weather}
+        location={location}
+        onOpenCropDetail={onOpenCropDetail}
+        onNavigate={onNavigate}
+      />
+
+      {/* Regional Market Overview (Gemini Google Search Grounding) */}
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -457,15 +582,15 @@ export function HomeDashboard({
           </div>
 
           <div className="flex items-center gap-2">
-            {marketStatus.agmarknetConfigured && (
+            {marketStatus.geminiSearchEnabled && (
               <button
                 type="button"
                 disabled={marketSyncing}
                 onClick={onRefreshMarket}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#E4E9E0] bg-white hover:bg-[#FAF9F4] text-xs font-semibold text-[#202820] cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#245C3A]/30 bg-[#EAF3E8] hover:bg-[#DCECD8] text-xs font-semibold text-[#1E4A2F] cursor-pointer disabled:opacity-60"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${marketSyncing ? 'animate-spin' : ''}`} />
-                <span>{marketSyncing ? 'Syncing...' : 'Refresh Prices'}</span>
+                <span>{marketSyncing ? 'Searching Online...' : 'Fetch Live Prices'}</span>
               </button>
             )}
             <button
@@ -478,7 +603,7 @@ export function HomeDashboard({
           </div>
         </div>
 
-        {marketStatus.isStale && marketStatus.staleReason && (
+        {marketStatus.staleReason && (
           <div className="rounded-xl bg-[#FDF6EB] border border-[#EBD5B3] px-3.5 py-2.5 text-xs text-[#7D4E10] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{marketStatus.staleReason}</span>
@@ -489,14 +614,17 @@ export function HomeDashboard({
           {regionalHighlights.map((crop) => {
             const name = t.cropNames[crop.id] || crop.name;
             const positive = crop.priceChangePercent >= 0;
+            const isFetchingThis = fetchingCropId === crop.id;
             return (
-              <button
+              <div
                 key={crop.id}
-                type="button"
-                onClick={() => onOpenCropDetail(crop.id)}
-                className="bg-white border border-[#E4E9E0] rounded-2xl p-4 text-left hover:border-[#245C3A] transition-colors cursor-pointer flex flex-col justify-between"
+                className="bg-white border border-[#E4E9E0] rounded-2xl p-4 text-left hover:border-[#245C3A] transition-colors flex flex-col justify-between"
               >
-                <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onOpenCropDetail(crop.id)}
+                  className="flex items-center gap-3 text-left cursor-pointer"
+                >
                   <CropImage
                     src={crop.image}
                     alt={name}
@@ -506,51 +634,76 @@ export function HomeDashboard({
                   <div className="min-w-0">
                     <p className="font-semibold text-sm text-[#202820] truncate">{name}</p>
                     <p className="text-xs text-[#6B756A] truncate">
-                      {t.marketNames[crop.marketId] || crop.market}
+                      {crop.hasVerifiedPrice
+                        ? t.marketNames[crop.marketId] || crop.market
+                        : `${location.district} APMC`}
                     </p>
                   </div>
-                </div>
+                </button>
 
-                <div className="mt-3 flex items-end justify-between gap-2">
-                  <div>
-                    <p className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
-                      ₹{crop.modalPrice}
-                      <span className="text-xs font-normal text-[#6B756A]">/kg</span>
-                    </p>
-                    {crop.hasComparableHistory && !crop.isDemo ? (
-                      <p
-                        className={`font-mono text-xs font-semibold tabular-nums flex items-center gap-0.5 ${
-                          positive ? 'text-[#245C3A]' : 'text-amber-700'
-                        }`}
-                      >
-                        <ArrowUpRight className={`w-3.5 h-3.5 ${!positive ? 'rotate-90' : ''}`} />
-                        <span>
-                          {positive ? '+' : ''}
-                          {crop.priceChangePercent}%
-                        </span>
+                {crop.hasVerifiedPrice ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenCropDetail(crop.id)}
+                    className="mt-3 flex items-end justify-between gap-2 text-left cursor-pointer"
+                  >
+                    <div>
+                      <p className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
+                        ₹{crop.modalPrice}
+                        <span className="text-xs font-normal text-[#6B756A]">/kg</span>
                       </p>
-                    ) : (
-                      <p className="text-[11px] text-[#6B756A]">
-                        {crop.isDemo ? 'Reference baseline' : 'Latest observation'}
-                      </p>
+                      {crop.hasComparableHistory ? (
+                        <p
+                          className={`font-mono text-xs font-semibold tabular-nums flex items-center gap-0.5 ${
+                            positive ? 'text-[#245C3A]' : 'text-amber-700'
+                          }`}
+                        >
+                          <ArrowUpRight className={`w-3.5 h-3.5 ${!positive ? 'rotate-90' : ''}`} />
+                          <span>
+                            {positive ? '+' : ''}
+                            {crop.priceChangePercent}%
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-[#6B756A] truncate max-w-[140px]">
+                          {crop.observationDate || crop.updatedAt}
+                        </p>
+                      )}
+                    </div>
+
+                    {crop.priceHistory['7d'].length >= 2 && (
+                      <div className="w-20 h-10">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={crop.priceHistory['7d']}>
+                            <Line
+                              type="monotone"
+                              dataKey="modal"
+                              stroke={positive ? '#245C3A' : '#B45309'}
+                              strokeWidth={2}
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
                     )}
+                  </button>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-[#6B756A] leading-snug">
+                      {UNAVAILABLE_PRICE_MESSAGE}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={isFetchingThis || marketSyncing}
+                      onClick={() => onFetchCropPrice(crop.id)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C3A] hover:underline cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isFetchingThis ? 'animate-spin' : ''}`} />
+                      <span>{isFetchingThis ? 'Searching online...' : 'Fetch Live Price'}</span>
+                    </button>
                   </div>
-
-                  <div className="w-20 h-10">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={crop.priceHistory['7d']}>
-                        <Line
-                          type="monotone"
-                          dataKey="modal"
-                          stroke={positive ? '#245C3A' : '#B45309'}
-                          strokeWidth={2}
-                          dot={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </button>
+                )}
+              </div>
             );
           })}
         </div>
@@ -577,7 +730,7 @@ export function HomeDashboard({
               </select>
             </div>
 
-            {compareSummary && (
+            {compareSummary ? (
               <div className="mt-4 space-y-2.5">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/50 p-3">
@@ -600,6 +753,29 @@ export function HomeDashboard({
                     </p>
                   </div>
                 </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-xl border border-dashed border-[#D3DDD0] bg-[#FAF9F4] p-4 text-center space-y-2">
+                <p className="text-xs text-[#5A6B5F]">{UNAVAILABLE_PRICE_MESSAGE}</p>
+                {effectiveCompareCrop && (
+                  <button
+                    type="button"
+                    disabled={fetchingCropId === effectiveCompareCrop.id}
+                    onClick={() => onFetchCropPrice(effectiveCompareCrop.id)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#EAF3E8] px-3 py-1.5 text-xs font-semibold text-[#1E4A2F] hover:bg-[#DCECD8] cursor-pointer"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${
+                        fetchingCropId === effectiveCompareCrop.id ? 'animate-spin' : ''
+                      }`}
+                    />
+                    <span>
+                      {fetchingCropId === effectiveCompareCrop.id
+                        ? 'Checking live mandis...'
+                        : `Fetch Live ${effectiveCompareCrop.name} Rates`}
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -640,22 +816,26 @@ export function HomeDashboard({
           {weather ? (
             <>
               <div className="grid grid-cols-7 gap-1.5 overflow-x-auto">
-                {weather.forecast.slice(0, 7).map((day) => (
+                {weather.forecast.slice(0, 7).map((day, idx) => (
                   <div
                     key={day.date}
-                    className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-2 text-center"
+                    className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-2 text-center flex flex-col items-center gap-0.5"
                   >
-                    <p className="text-[11px] font-semibold text-[#6B756A] truncate">
-                      {day.dayLabel}
+                    <p className="text-[11px] font-semibold text-[#202820] truncate w-full">
+                      {idx === 0 ? 'Today' : day.weekday}
                     </p>
-                    <p className="mt-1 font-mono text-sm font-bold text-[#202820] tabular-nums">
-                      {day.maxTemp}°
+                    <p className="text-[10px] text-[#6B756A] truncate w-full">{day.shortDate}</p>
+                    <div className="my-0.5">
+                      {renderCompactWeatherIcon(day.condition, day.rainProbability)}
+                    </div>
+                    <p className="font-mono text-xs font-bold text-[#202820] tabular-nums">
+                      {day.maxTemp !== null ? `${day.maxTemp}°` : '—'}
                     </p>
                     <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">
-                      {day.minTemp}°
+                      {day.minTemp !== null ? `${day.minTemp}°` : '—'}
                     </p>
-                    <p className="mt-1 font-mono text-[10px] font-semibold text-[#5A91C8] tabular-nums">
-                      {day.rainProbability}%
+                    <p className="mt-0.5 font-mono text-[10px] font-semibold text-[#5A91C8] tabular-nums">
+                      {day.rainProbability !== null ? `${day.rainProbability}%` : '—'}
                     </p>
                   </div>
                 ))}
@@ -676,7 +856,7 @@ export function HomeDashboard({
             <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-5 text-center space-y-2">
               <p className="text-xs text-[#6B756A]">
                 {weatherLoading
-                  ? 'Fetching live 7-day weather forecast...'
+                  ? 'Fetching live 7-day weather forecast via Gemini Search...'
                   : weatherError || 'Unable to load live weather right now.'}
               </p>
               {!weatherLoading && (

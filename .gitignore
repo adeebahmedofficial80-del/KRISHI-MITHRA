@@ -7,4 +7,6 @@ coverage/
 .env*
 !.env.example
 .krishi-cache/
+dev-dist/
+.gmp_cache/
 

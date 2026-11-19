@@ -1,18 +1,24 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
 import {GoogleGenAI, ThinkingLevel} from '@google/genai';
-import {generatePersonalizedDailyBriefing} from './src/server/briefingService';
-import {marketService} from './src/server/marketService';
-import {getDynamicWeatherForecast} from './src/server/weatherService';
-import {LanguageCode} from './src/types/krishi';
+import {generatePersonalizedDailyBriefing} from './src/server/briefingService.ts';
+import {marketService} from './src/server/marketService.ts';
+import {getDynamicWeatherForecast} from './src/server/weatherService.ts';
+import type {LanguageCode} from './src/types/krishi.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
-const IS_PROD = process.env.NODE_ENV === 'production';
+const DIST_PATH = path.resolve(__dirname, 'dist');
+const HAS_DIST_BUILD = fs.existsSync(path.join(DIST_PATH, 'index.html'));
+const IS_PROD =
+  process.env.NODE_ENV === 'production' ||
+  Boolean(process.env.K_SERVICE) ||
+  (process.env.npm_lifecycle_event === 'start' && HAS_DIST_BUILD);
 
 function getAiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -70,9 +76,6 @@ async function startServer() {
   const app = express();
   app.use(express.json({limit: '2mb'}));
 
-  // Start background daily market sync scheduler
-  marketService.startDailyScheduler();
-
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
@@ -80,8 +83,8 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       integrations: {
         geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
-        agmarknetConfigured: Boolean(process.env.DATA_GOV_IN_API_KEY),
-        imdConfigured: Boolean(process.env.IMD_API_KEY && process.env.IMD_API_BASE_URL),
+        geminiSearchGrounding: Boolean(process.env.GEMINI_API_KEY),
+        weatherGeminiGrounded: Boolean(process.env.GEMINI_API_KEY),
         mapsConfigured: Boolean(
           process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY,
         ),
@@ -97,42 +100,120 @@ async function startServer() {
     res.json({apiKey});
   });
 
-  // ==================== DYNAMIC MARKET DATA PIPELINE (AGMARKNET) ====================
+  // ==================== DYNAMIC MARKET DATA PIPELINE (GEMINI GOOGLE SEARCH GROUNDING) ====================
   app.get('/api/market/status', (_req, res) => {
     res.json(marketService.getStatus());
   });
 
-  app.get('/api/market/prices', (req, res) => {
-    const state = typeof req.query.state === 'string' ? req.query.state : undefined;
-    const district = typeof req.query.district === 'string' ? req.query.district : undefined;
-    const preferredMandi =
-      typeof req.query.preferredMandi === 'string' ? req.query.preferredMandi : undefined;
-
-    const feed = marketService.getMarketFeed({state, district, preferredMandi});
-    res.json(feed);
-  });
-
-  app.post('/api/market/sync', async (req, res) => {
+  app.get('/api/market/prices', async (req, res) => {
     try {
-      const state = typeof req.body?.state === 'string' ? req.body.state : undefined;
-      const status = await marketService.syncFromAgmarknet({state, force: true});
-      const feed = marketService.getMarketFeed({state});
-      return res.json({status, observations: feed.observations});
+      const state = typeof req.query.state === 'string' ? req.query.state : undefined;
+      const district = typeof req.query.district === 'string' ? req.query.district : undefined;
+      const preferredMandi =
+        typeof req.query.preferredMandi === 'string' ? req.query.preferredMandi : undefined;
+      const cropsRaw = typeof req.query.crops === 'string' ? req.query.crops : '';
+      const autoFetch = req.query.autoFetch === '1' || req.query.autoFetch === 'true';
+
+      const cropIds = cropsRaw
+        ? cropsRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 6)
+        : [];
+
+      if (autoFetch && cropIds.length > 0 && marketService.isGeminiConfigured()) {
+        const feed = await marketService.fetchGroundedMarketPrices({
+          cropIds,
+          state,
+          district,
+          preferredMandi,
+          forceRefresh: false,
+        });
+        return res.json(feed);
+      }
+
+      const feed = marketService.getMarketFeed({state, district, preferredMandi});
+      return res.json(feed);
     } catch (error: unknown) {
-      console.error('Market sync route error:', error);
+      console.error('Market prices route error:', error);
       return res.status(500).json({
-        error: getErrMsg(error, 'Unable to synchronize AGMARKNET market prices.'),
+        error: getErrMsg(error, 'Unable to load verified market prices right now.'),
       });
     }
   });
 
-  // ==================== DYNAMIC WEATHER & IMD ADVISORIES ====================
+  app.post('/api/market/sync', async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const state = typeof body.state === 'string' ? body.state : undefined;
+      const district = typeof body.district === 'string' ? body.district : undefined;
+      const preferredMandi =
+        typeof body.preferredMandi === 'string' ? body.preferredMandi : undefined;
+      const cropIds = Array.isArray(body.cropIds)
+        ? body.cropIds
+            .filter((c: unknown): c is string => typeof c === 'string')
+            .map((c: string) => c.trim())
+            .filter(Boolean)
+            .slice(0, 6)
+        : ['tomato', 'onion', 'potato', 'banana'];
+      const forceRefresh = body.forceRefresh !== false;
+
+      const feed = await marketService.fetchGroundedMarketPrices({
+        cropIds,
+        state,
+        district,
+        preferredMandi,
+        forceRefresh,
+      });
+      return res.json(feed);
+    } catch (error: unknown) {
+      console.error('Market sync route error:', error);
+      return res.status(500).json({
+        error: getErrMsg(error, 'Unable to retrieve live market prices via Gemini Search.'),
+      });
+    }
+  });
+
+  app.post('/api/market/crop-search', async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const cropId = typeof body.cropId === 'string' ? body.cropId.trim() : '';
+      if (!cropId) {
+        return res.status(400).json({error: 'cropId is required.'});
+      }
+      const state = typeof body.state === 'string' ? body.state : undefined;
+      const district = typeof body.district === 'string' ? body.district : undefined;
+      const preferredMandi =
+        typeof body.preferredMandi === 'string' ? body.preferredMandi : undefined;
+      const forceRefresh = Boolean(body.forceRefresh);
+
+      const feed = await marketService.fetchGroundedMarketPrices({
+        cropIds: [cropId],
+        state,
+        district,
+        preferredMandi,
+        forceRefresh,
+      });
+      return res.json(feed);
+    } catch (error: unknown) {
+      console.error('Crop search route error:', error);
+      return res.status(500).json({
+        error: getErrMsg(error, 'Unable to fetch live price for this crop right now.'),
+      });
+    }
+  });
+
+  // ==================== DYNAMIC WEATHER (GEMINI GOOGLE SEARCH GROUNDING) ====================
   app.get('/api/weather/forecast', async (req, res) => {
     try {
       const locationId =
         typeof req.query.locationId === 'string' && req.query.locationId.trim()
           ? req.query.locationId.trim()
           : 'bengaluru-rural';
+      const state = typeof req.query.state === 'string' ? req.query.state.trim() : undefined;
+      const district =
+        typeof req.query.district === 'string' ? req.query.district.trim() : undefined;
       const taluk = typeof req.query.taluk === 'string' ? req.query.taluk.trim() : undefined;
       const cropsRaw = typeof req.query.crops === 'string' ? req.query.crops : '';
       const savedCropIds = cropsRaw
@@ -154,6 +235,8 @@ async function startServer() {
 
       const snapshot = await getDynamicWeatherForecast({
         locationId,
+        state,
+        district,
         taluk,
         savedCropIds,
         alertPrefs,
@@ -161,11 +244,11 @@ async function startServer() {
       });
       return res.json(snapshot);
     } catch (error: unknown) {
-      console.error('Weather forecast error:', error);
+      console.error('Weather forecast error:', error instanceof Error ? error.message : error);
       return res.status(503).json({
         error: getErrMsg(
           error,
-          'Live weather service is temporarily unreachable. Please retry shortly.',
+          'Live weather retrieval via Gemini Search is temporarily unavailable. Please retry shortly.',
         ),
       });
     }
@@ -266,13 +349,26 @@ async function startServer() {
         });
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Check recent Indian mandi / APMC market price trends, arrival conditions, and seasonal context for ${cropName} around ${marketName || 'local APMC'}, ${locationName || 'India'}. Summarize clearly for a smallholder farmer in ${targetLang} using short bullet points. Distinguish verified market reports from general estimates and avoid promising future prices.`,
-        config: {
-          tools: [{googleSearch: {}}],
-        },
-      });
+      const searchPrompt = `Check recent Indian mandi / APMC market price trends, arrival conditions, and seasonal context for ${cropName} around ${marketName || 'local APMC'}, ${locationName || 'India'}. Summarize clearly for a smallholder farmer in ${targetLang} using short bullet points. Distinguish verified market reports from general estimates and avoid promising future prices.`;
+      let response = null;
+      let lastErr: unknown = null;
+      for (const model of ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents: searchPrompt,
+            config: {
+              tools: [{googleSearch: {}}],
+            },
+          });
+          break;
+        } catch (err: unknown) {
+          lastErr = err;
+        }
+      }
+      if (!response) {
+        throw lastErr || new Error('Unable to fetch live mandi grounding right now.');
+      }
 
       const chunks = (response.candidates?.[0]?.groundingMetadata?.groundingChunks ??
         []) as GroundingChunkLike[];
@@ -325,14 +421,37 @@ async function startServer() {
         .filter(Boolean)
         .join('\n\n');
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: prompt,
-        config: {
-          thinkingConfig: {thinkingLevel: ThinkingLevel.HIGH},
-          systemInstruction: `You are KRISHI-MITHRA, a trusted Indian agricultural advisor speaking to smallholder farmers. Respond strictly in ${targetLang}. Use short, clear paragraphs and practical bullet points. Never make medical claims or guarantee future mandi prices; always advise weighing transport and grading costs before choosing a distant mandi.`,
-        },
-      });
+      const advisorSystemInstruction = `You are KRISHI-MITHRA, a trusted Indian agricultural advisor speaking to smallholder farmers. Respond strictly in ${targetLang}. Use short, clear paragraphs and practical bullet points. Never make medical claims or guarantee future mandi prices; always advise weighing transport and grading costs before choosing a distant mandi.`;
+
+      let response = null;
+      let lastErr: unknown = null;
+      try {
+        response = await ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: prompt,
+          config: {
+            thinkingConfig: {thinkingLevel: ThinkingLevel.LOW},
+            systemInstruction: advisorSystemInstruction,
+          },
+        });
+      } catch (err: unknown) {
+        lastErr = err;
+        try {
+          response = await ai.models.generateContent({
+            model: 'gemini-3.1-flash-lite',
+            contents: prompt,
+            config: {
+              systemInstruction: advisorSystemInstruction,
+            },
+          });
+        } catch (fallbackErr: unknown) {
+          lastErr = fallbackErr;
+        }
+      }
+
+      if (!response) {
+        throw lastErr || new Error('Unable to get advisor response right now.');
+      }
 
       return res.json({
         answer: response.text || '',
@@ -418,23 +537,41 @@ async function startServer() {
     }
   });
 
-  if (!IS_PROD) {
-    const {createServer: createViteServer} = await import('vite');
-    const vite = await createViteServer({
-      server: {middlewareMode: true},
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
+  const mountStaticDist = () => {
+    app.use(express.static(DIST_PATH));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexFile = path.join(DIST_PATH, 'index.html');
+      if (fs.existsSync(indexFile)) {
+        return res.sendFile(indexFile);
+      }
+      return res.status(503).send('Production bundle not found. Run npm run build first.');
     });
+  };
+
+  if (!IS_PROD) {
+    try {
+      const {createServer: createViteServer} = await import('vite');
+      const vite = await createViteServer({
+        server: {middlewareMode: true, hmr: false},
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      if (HAS_DIST_BUILD) {
+        console.warn('Vite dev middleware unavailable; serving static dist/ bundle.');
+        mountStaticDist();
+      } else {
+        throw viteErr;
+      }
+    }
+  } else {
+    mountStaticDist();
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`KRISHI-MITHRA server listening on http://0.0.0.0:${PORT}`);
+    console.log(
+      `KRISHI-MITHRA server listening on http://0.0.0.0:${PORT} (mode=${IS_PROD ? 'production' : 'development'})`,
+    );
   });
 }
 

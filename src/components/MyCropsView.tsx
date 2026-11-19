@@ -4,11 +4,13 @@ import {
   BellRing,
   CheckCircle2,
   Minus,
+  RefreshCw,
   Sprout,
   Trash2,
 } from 'lucide-react';
 import {useMemo} from 'react';
 import {TranslationPack} from '../data/translations';
+import {UNAVAILABLE_PRICE_MESSAGE} from '../services/marketProvider';
 import {CropProduct, MarketSyncStatus, NavTab, PriceAlert} from '../types/krishi';
 import {CropImage} from './CropImage';
 
@@ -16,6 +18,8 @@ interface MyCropsViewProps {
   t: TranslationPack;
   products: CropProduct[];
   marketStatus: MarketSyncStatus;
+  fetchingCropId: string | null;
+  onFetchCropPrice: (cropId: string) => void;
   favoriteCropIds: string[];
   priceAlerts: PriceAlert[];
   onToggleFavorite: (cropId: string) => void;
@@ -30,6 +34,8 @@ export function MyCropsView({
   t,
   products,
   marketStatus,
+  fetchingCropId,
+  onFetchCropPrice,
   favoriteCropIds,
   priceAlerts,
   onToggleFavorite,
@@ -57,7 +63,7 @@ export function MyCropsView({
   );
 
   const isAlertTriggered = (alert: PriceAlert, crop?: CropProduct) => {
-    if (!crop || !alert.enabled) return false;
+    if (!crop || !crop.hasVerifiedPrice || !alert.enabled) return false;
     return alert.condition === 'above'
       ? crop.modalPrice >= alert.targetPrice
       : crop.modalPrice <= alert.targetPrice;
@@ -162,38 +168,65 @@ export function MyCropsView({
                       </button>
                     </div>
 
-                    <div className="mt-4 flex items-baseline justify-between gap-2">
-                      <div>
-                        <span className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
-                          ₹{crop.modalPrice}
-                          <span className="text-xs font-normal text-[#6B756A]">/kg</span>
-                        </span>
-                        <span className="ml-2 font-mono text-xs text-[#6B756A] tabular-nums">
-                          (₹{Math.round(crop.modalPriceQuintal ?? crop.modalPrice * 100).toLocaleString('en-IN')}/qtl)
-                        </span>
-                      </div>
+                    {crop.hasVerifiedPrice ? (
+                      <div className="mt-4 flex items-baseline justify-between gap-2">
+                        <div>
+                          <span className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
+                            ₹{crop.modalPrice}
+                            <span className="text-xs font-normal text-[#6B756A]">/kg</span>
+                          </span>
+                          <span className="ml-2 font-mono text-xs text-[#6B756A] tabular-nums">
+                            (₹
+                            {Math.round(
+                              crop.modalPriceQuintal ?? crop.modalPrice * 100,
+                            ).toLocaleString('en-IN')}
+                            /qtl)
+                          </span>
+                        </div>
 
-                      {hasComparable ? (
-                        <span
-                          className={`inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums ${
-                            positive ? 'text-[#245C3A]' : 'text-amber-700'
-                          }`}
+                        {hasComparable ? (
+                          <span
+                            className={`inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums ${
+                              positive ? 'text-[#245C3A]' : 'text-amber-700'
+                            }`}
+                          >
+                            {positive ? (
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            ) : (
+                              <ArrowDownRight className="w-3.5 h-3.5" />
+                            )}
+                            {positive ? '+' : ''}
+                            {crop.priceChangePercent}%
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 font-mono text-[11px] text-[#6B756A]">
+                            <Minus className="w-3 h-3" />
+                            <span>{crop.observationDate || crop.updatedAt}</span>
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-dashed border-[#D3DDD0] bg-[#FAF9F4] p-2.5 space-y-1.5">
+                        <p className="text-xs text-[#5A6B5F]">{UNAVAILABLE_PRICE_MESSAGE}</p>
+                        <button
+                          type="button"
+                          disabled={fetchingCropId === crop.id}
+                          onClick={() => onFetchCropPrice(crop.id)}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-[#245C3A] hover:underline cursor-pointer disabled:opacity-50"
                         >
-                          {positive ? (
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          ) : (
-                            <ArrowDownRight className="w-3.5 h-3.5" />
-                          )}
-                          {positive ? '+' : ''}
-                          {crop.priceChangePercent}%
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-0.5 font-mono text-[11px] text-[#6B756A]">
-                          <Minus className="w-3 h-3" />
-                          <span>Reference</span>
-                        </span>
-                      )}
-                    </div>
+                          <RefreshCw
+                            className={`w-3 h-3 ${
+                              fetchingCropId === crop.id ? 'animate-spin' : ''
+                            }`}
+                          />
+                          <span>
+                            {fetchingCropId === crop.id
+                              ? 'Searching online...'
+                              : 'Fetch Live Price'}
+                          </span>
+                        </button>
+                      </div>
+                    )}
 
                     {hitAlert ? (
                       <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C3A]">
@@ -289,7 +322,10 @@ export function MyCropsView({
                       )}
                     </div>
                     <p className="text-xs text-[#6B756A] mt-0.5">
-                      Current ₹{crop?.modalPrice ?? '—'}/kg · Channel:{' '}
+                      {crop?.hasVerifiedPrice
+                        ? `Verified ₹${crop.modalPrice}/kg`
+                        : 'Price pending live fetch'}{' '}
+                      · Channel:{' '}
                       {alert.channel === 'app'
                         ? 'In-app'
                         : alert.channel === 'sms_demo'

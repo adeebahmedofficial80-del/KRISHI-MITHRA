@@ -1,4 +1,4 @@
-import {LocationOption, MarketCenter} from '../types/krishi';
+import type {LocationOption, MarketCenter} from '../types/krishi.ts';
 
 export const KARNATAKA_LOCATIONS: LocationOption[] = [
   {

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import {useMemo, useState} from 'react';
 import {TranslationPack} from '../data/translations';
+import {UNAVAILABLE_PRICE_MESSAGE} from '../services/marketProvider';
 import {
   CropProduct,
   LanguageCode,
@@ -30,7 +31,9 @@ interface MarketPricesViewProps {
   products: CropProduct[];
   marketStatus: MarketSyncStatus;
   marketSyncing: boolean;
+  fetchingCropId: string | null;
   onRefreshMarket: () => void;
+  onFetchCropPrice: (cropId: string) => void;
   selectedCropId: string;
   onSelectCrop: (cropId: string) => void;
   favoriteCropIds: string[];
@@ -69,7 +72,9 @@ export function MarketPricesView({
   products,
   marketStatus,
   marketSyncing,
+  fetchingCropId,
   onRefreshMarket,
+  onFetchCropPrice,
   selectedCropId,
   onSelectCrop,
   favoriteCropIds,
@@ -153,11 +158,19 @@ export function MarketPricesView({
     });
 
     return [...filtered].sort((a, b) => {
-      if (sortMode === 'modal_desc') return b.modalPrice - a.modalPrice;
-      if (sortMode === 'modal_asc') return a.modalPrice - b.modalPrice;
+      if (sortMode === 'modal_desc') {
+        const aVal = a.hasVerifiedPrice ? a.modalPrice : -1;
+        const bVal = b.hasVerifiedPrice ? b.modalPrice : -1;
+        return bVal - aVal;
+      }
+      if (sortMode === 'modal_asc') {
+        const aVal = a.hasVerifiedPrice ? a.modalPrice : Number.POSITIVE_INFINITY;
+        const bVal = b.hasVerifiedPrice ? b.modalPrice : Number.POSITIVE_INFINITY;
+        return aVal - bVal;
+      }
       if (sortMode === 'change_desc') {
-        const aVal = a.hasComparableHistory ? a.priceChangePercent : -9999;
-        const bVal = b.hasComparableHistory ? b.priceChangePercent : -9999;
+        const aVal = a.hasVerifiedPrice && a.hasComparableHistory ? a.priceChangePercent : -9999;
+        const bVal = b.hasVerifiedPrice && b.hasComparableHistory ? b.priceChangePercent : -9999;
         return bVal - aVal;
       }
       const nameA = t.cropNames[a.id] || a.name;
@@ -222,10 +235,12 @@ export function MarketPricesView({
             const name = t.cropNames[crop.id] || crop.name;
             const isFav = favoriteCropIds.includes(crop.id);
             const active = selectedCrop?.id === crop.id;
-            const hasComparable = Boolean(crop.hasComparableHistory);
+            const hasVerified = Boolean(crop.hasVerifiedPrice);
+            const hasComparable = Boolean(crop.hasComparableHistory && hasVerified);
             const positive = crop.priceChangePercent >= 0;
-            const isLive = crop.dataSource === 'live_agmarknet';
-            const isCached = crop.dataSource === 'cached_agmarknet';
+            const isLive = crop.dataSource === 'gemini_grounded';
+            const isCached = crop.dataSource === 'cached_grounded';
+            const isFetchingThis = fetchingCropId === crop.id;
 
             return (
               <div
@@ -252,7 +267,8 @@ export function MarketPricesView({
                       <div className="min-w-0">
                         <h3 className="text-sm font-bold text-[#202820] truncate">{name}</h3>
                         <p className="text-[11px] text-[#6B756A] truncate">
-                          {crop.variety} · {t.marketNames[crop.marketId] || crop.market}
+                          {crop.variety}
+                          {hasVerified ? ` · ${t.marketNames[crop.marketId] || crop.market}` : ''}
                         </p>
                       </div>
                     </button>
@@ -282,54 +298,77 @@ export function MarketPricesView({
                     </button>
                   </div>
 
-                  <div className="mt-3 flex items-baseline justify-between gap-2">
-                    <span className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
-                      {formatPriceValue(crop.modalPrice, crop.modalPriceQuintal, priceUnit)}
-                      <span className="text-xs font-normal text-[#6B756A]">{unitSuffix}</span>
-                    </span>
+                  {hasVerified ? (
+                    <>
+                      <div className="mt-3 flex items-baseline justify-between gap-2">
+                        <span className="font-mono text-2xl font-bold text-[#202820] tabular-nums">
+                          {formatPriceValue(crop.modalPrice, crop.modalPriceQuintal, priceUnit)}
+                          <span className="text-xs font-normal text-[#6B756A]">{unitSuffix}</span>
+                        </span>
 
-                    {hasComparable ? (
-                      <span
-                        className={`inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums ${
-                          positive ? 'text-[#245C3A]' : 'text-amber-700'
-                        }`}
-                      >
-                        {positive ? (
-                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        {hasComparable ? (
+                          <span
+                            className={`inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums ${
+                              positive ? 'text-[#245C3A]' : 'text-amber-700'
+                            }`}
+                          >
+                            {positive ? (
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            ) : (
+                              <ArrowDownRight className="w-3.5 h-3.5" />
+                            )}
+                            {positive ? '+' : ''}
+                            {crop.priceChangePercent}%
+                          </span>
                         ) : (
-                          <ArrowDownRight className="w-3.5 h-3.5" />
+                          <span
+                            title="Single verified date recorded so far"
+                            className="inline-flex items-center gap-0.5 font-mono text-[11px] text-[#6B756A]"
+                          >
+                            <Minus className="w-3 h-3" />
+                            <span>{crop.observationDate || crop.updatedAt}</span>
+                          </span>
                         )}
-                        {positive ? '+' : ''}
-                        {crop.priceChangePercent}%
-                      </span>
-                    ) : (
-                      <span
-                        title="No verified comparable prior-day observation"
-                        className="inline-flex items-center gap-0.5 font-mono text-[11px] text-[#6B756A]"
-                      >
-                        <Minus className="w-3 h-3" />
-                        <span>No prior diff</span>
-                      </span>
-                    )}
-                  </div>
+                      </div>
 
-                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-[#6B756A]">
-                    <span className="font-mono tabular-nums truncate">
-                      {formatPriceValue(crop.minimumPrice, crop.minimumPriceQuintal, priceUnit)}–
-                      {formatPriceValue(crop.maximumPrice, crop.maximumPriceQuintal, priceUnit)}
-                    </span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                        isLive
-                          ? 'bg-[#EAF3E8] text-[#245C3A]'
-                          : isCached
-                            ? 'bg-amber-50 text-amber-800'
-                            : 'bg-white border border-[#E4E9E0] text-[#6B756A]'
-                      }`}
-                    >
-                      {isLive ? 'AGMARKNET' : isCached ? 'Cached' : 'Reference'}
-                    </span>
-                  </div>
+                      <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-[#6B756A]">
+                        <span className="font-mono tabular-nums truncate">
+                          {formatPriceValue(crop.minimumPrice, crop.minimumPriceQuintal, priceUnit)}–
+                          {formatPriceValue(crop.maximumPrice, crop.maximumPriceQuintal, priceUnit)}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                            isLive
+                              ? 'bg-[#EAF3E8] text-[#245C3A]'
+                              : isCached
+                                ? 'bg-amber-50 text-amber-800'
+                                : 'bg-white border border-[#E4E9E0] text-[#6B756A]'
+                          }`}
+                        >
+                          {isLive ? 'Gemini Live' : 'Cached'}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-dashed border-[#D3DDD0] bg-white/80 p-2.5 space-y-1.5">
+                      <p className="text-[11px] text-[#5A6B5F] leading-snug">
+                        {UNAVAILABLE_PRICE_MESSAGE}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={isFetchingThis || marketSyncing}
+                        onClick={() => onFetchCropPrice(crop.id)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#245C3A] hover:underline cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw
+                          className={`w-3 h-3 ${isFetchingThis ? 'animate-spin' : ''}`}
+                        />
+                        <span>
+                          {isFetchingThis ? 'Searching online...' : 'Fetch Live Price'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -407,32 +446,32 @@ export function MarketPricesView({
           </div>
         </div>
 
-        {/* Truthful Market Data Source Disclosure */}
+        {/* Truthful Gemini Google Search Grounding Disclosure */}
         <div
           className={`rounded-xl border px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs ${
-            marketStatus.sourceStatus === 'live_agmarknet' && !marketStatus.isStale
+            marketStatus.sourceStatus === 'gemini_grounded' && !marketStatus.isStale
               ? 'bg-[#EAF3E8]/70 border-[#245C3A]/30 text-[#202820]'
               : 'bg-amber-50/70 border-amber-200 text-amber-950'
           }`}
         >
           <div className="flex items-start sm:items-center gap-2">
-            {marketStatus.sourceStatus === 'live_agmarknet' ? (
+            {marketStatus.sourceStatus === 'gemini_grounded' ? (
               <Database className="w-4 h-4 text-[#245C3A] shrink-0 mt-0.5 sm:mt-0" />
             ) : (
               <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5 sm:mt-0" />
             )}
             <span>
               <strong>{marketStatus.sourceLabel}</strong>
-              {marketStatus.observationDate ? ` · Arrival Date: ${marketStatus.observationDate}` : ''}
+              {marketStatus.observationDate ? ` · Latest Date: ${marketStatus.observationDate}` : ''}
               {marketStatus.matchedCropCount > 0
-                ? ` · ${marketStatus.matchedCropCount} crops matched from AGMARKNET`
+                ? ` · ${marketStatus.matchedCropCount} crops verified online`
                 : ''}
               {marketStatus.staleReason ? ` · ${marketStatus.staleReason}` : ''}
             </span>
           </div>
           {marketStatus.lastSyncAt && (
             <span className="font-mono text-[11px] opacity-80">
-              Synced: {new Date(marketStatus.lastSyncAt).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'})}
+              Retrieved: {new Date(marketStatus.lastSyncAt).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'})}
             </span>
           )}
         </div>
@@ -522,6 +561,8 @@ export function MarketPricesView({
             location={location}
             isFavorite={favoriteCropIds.includes(selectedCrop.id)}
             cropAlerts={priceAlerts.filter((a) => a.cropId === selectedCrop.id)}
+            isFetchingLivePrice={fetchingCropId === selectedCrop.id}
+            onFetchLivePrice={() => onFetchCropPrice(selectedCrop.id)}
             onToggleFavorite={onToggleFavorite}
             onOpenAlertModal={onOpenAlertModal}
             onSelectCrop={onSelectCrop}
@@ -611,7 +652,8 @@ export function MarketPricesView({
               </thead>
               <tbody className="divide-y divide-[#E4E9E0] text-sm">
                 {combinedVisible.map((crop) => {
-                  const hasComparable = Boolean(crop.hasComparableHistory);
+                  const hasVerified = Boolean(crop.hasVerifiedPrice);
+                  const hasComparable = Boolean(crop.hasComparableHistory && hasVerified);
                   const positive = crop.priceChangePercent >= 0;
                   return (
                     <tr
@@ -628,22 +670,36 @@ export function MarketPricesView({
                         {crop.category === 'vegetable' ? t.vegetables : t.fruits}
                       </td>
                       <td className="py-3 px-3 text-xs text-[#6B756A]">
-                        {t.marketNames[crop.marketId] || crop.market}
+                        {hasVerified ? t.marketNames[crop.marketId] || crop.market : '—'}
                       </td>
                       <td className="py-3 px-3 font-mono font-bold text-[#202820] tabular-nums">
-                        {formatPriceValue(crop.modalPrice, crop.modalPriceQuintal, priceUnit)}
-                        {unitSuffix}
+                        {hasVerified ? (
+                          <>
+                            {formatPriceValue(crop.modalPrice, crop.modalPriceQuintal, priceUnit)}
+                            {unitSuffix}
+                          </>
+                        ) : (
+                          <span className="font-sans text-xs font-normal text-[#6B756A]">
+                            Unavailable
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-3 font-mono text-xs text-[#6B756A] tabular-nums">
-                        {formatPriceValue(crop.minimumPrice, crop.minimumPriceQuintal, priceUnit)}–
-                        {formatPriceValue(crop.maximumPrice, crop.maximumPriceQuintal, priceUnit)}
+                        {hasVerified ? (
+                          <>
+                            {formatPriceValue(crop.minimumPrice, crop.minimumPriceQuintal, priceUnit)}–
+                            {formatPriceValue(crop.maximumPrice, crop.maximumPriceQuintal, priceUnit)}
+                          </>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="py-3 px-3 text-xs text-[#6B756A]">
-                        {crop.dataSource === 'live_agmarknet'
-                          ? 'AGMARKNET'
-                          : crop.dataSource === 'cached_agmarknet'
-                            ? 'Cached'
-                            : 'Reference'}
+                        {crop.dataSource === 'gemini_grounded'
+                          ? crop.sourceName || 'Gemini Search'
+                          : crop.dataSource === 'cached_grounded'
+                            ? 'Cached Search'
+                            : 'Not fetched'}
                       </td>
                       <td
                         className={`py-3 pl-3 text-right font-mono text-xs font-semibold tabular-nums ${

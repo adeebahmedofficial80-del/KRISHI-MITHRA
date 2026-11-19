@@ -24,7 +24,7 @@ export default defineConfig(() => {
           name: 'Krishi Mitra',
           short_name: 'Krishi Mitra',
           description:
-            'Smart farmer market price monitoring, 20-crop vegetable and fruit intelligence, nutrition profiles, and live weather advisories.',
+            'Smart farmer market price monitoring, 44-crop vegetable and fruit intelligence, nutrition profiles, and Gemini-powered live weather advisories.',
           theme_color: '#245C3A',
           background_color: '#F7F8F4',
           display: 'standalone',
@@ -75,18 +75,6 @@ export default defineConfig(() => {
                 expiration: {
                   maxEntries: 10,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
-                },
-                cacheableResponse: {statuses: [0, 200]},
-              },
-            },
-            {
-              urlPattern: /^https:\/\/api\.open-meteo\.com\/.*/i,
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'open-meteo-weather-cache',
-                expiration: {
-                  maxEntries: 20,
-                  maxAgeSeconds: 60 * 60 * 6,
                 },
                 cacheableResponse: {statuses: [0, 200]},
               },

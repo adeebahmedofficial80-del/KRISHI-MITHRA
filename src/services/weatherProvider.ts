@@ -1,99 +1,168 @@
 import {LocationOption, WeatherAlertPrefs, WeatherSnapshot} from '../types/krishi';
 
-const WEATHER_CACHE_KEY = 'km_weather_cache_v2';
+const CACHE_KEY = 'km_weather_cache_v3';
+const CLIENT_TIMEOUT_MS = 38_000;
 
-export interface WeatherDataProvider {
-  getForecast(
-    location: LocationOption,
-    alertPrefs: WeatherAlertPrefs,
-    options?: {taluk?: string; savedCropIds?: string[]; forceRefresh?: boolean},
-  ): Promise<WeatherSnapshot>;
+interface StoredWeatherEntry {
+  savedAt: number;
+  snapshot: WeatherSnapshot;
 }
 
-class BackendWeatherProvider implements WeatherDataProvider {
-  private readCache(locationId: string): WeatherSnapshot | null {
-    try {
-      const raw = localStorage.getItem(WEATHER_CACHE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as Record<string, {savedAt: number; snapshot: WeatherSnapshot}>;
-      const entry = parsed[locationId];
-      if (!entry) return null;
-      // Allow up to 18 hours as offline cache, clearly marked stale
-      if (Date.now() - entry.savedAt > 18 * 60 * 60 * 1000) return null;
-      return entry.snapshot;
-    } catch {
-      return null;
-    }
-  }
+const inFlightClientRequests = new Map<string, Promise<WeatherSnapshot>>();
 
-  private writeCache(locationId: string, snapshot: WeatherSnapshot): void {
-    try {
-      const raw = localStorage.getItem(WEATHER_CACHE_KEY);
-      const parsed: Record<string, {savedAt: number; snapshot: WeatherSnapshot}> = raw
-        ? JSON.parse(raw)
-        : {};
-      parsed[locationId] = {savedAt: Date.now(), snapshot};
-      localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(parsed));
-    } catch {
-      // Ignore storage quota errors
+function buildLocationCacheKey(state: string, district: string, taluk?: string): string {
+  return `${state.trim().toLowerCase()}|${district.trim().toLowerCase()}|${(taluk || '').trim().toLowerCase()}`;
+}
+
+function readCachedWeather(cacheKey: string): StoredWeatherEntry | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw) as Record<string, StoredWeatherEntry>;
+    return map[cacheKey] || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedWeather(cacheKey: string, snapshot: WeatherSnapshot): void {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    const map: Record<string, StoredWeatherEntry> = raw ? JSON.parse(raw) : {};
+    map[cacheKey] = {savedAt: Date.now(), snapshot};
+    const keys = Object.keys(map);
+    if (keys.length > 12) {
+      keys
+        .sort((a, b) => (map[a]?.savedAt || 0) - (map[b]?.savedAt || 0))
+        .slice(0, keys.length - 12)
+        .forEach((oldKey) => delete map[oldKey]);
     }
+    localStorage.setItem(CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export interface WeatherFetchOptions {
+  state?: string;
+  district?: string;
+  taluk?: string;
+  savedCropIds?: string[];
+  forceRefresh?: boolean;
+}
+
+export interface WeatherProvider {
+  getForecast(
+    location: LocationOption,
+    prefs?: WeatherAlertPrefs,
+    options?: WeatherFetchOptions,
+  ): Promise<WeatherSnapshot>;
+  getCachedForecast(
+    location: LocationOption,
+    options?: {state?: string; district?: string; taluk?: string},
+  ): WeatherSnapshot | null;
+}
+
+export class DynamicWeatherProvider implements WeatherProvider {
+  getCachedForecast(
+    location: LocationOption,
+    options: {state?: string; district?: string; taluk?: string} = {},
+  ): WeatherSnapshot | null {
+    const state = (options.state || location.state).trim();
+    const district = (options.district || location.district).trim();
+    const taluk = (options.taluk || location.taluks[0] || '').trim();
+    const cacheKey = buildLocationCacheKey(state, district, taluk);
+    return readCachedWeather(cacheKey)?.snapshot || null;
   }
 
   async getForecast(
     location: LocationOption,
-    alertPrefs: WeatherAlertPrefs,
-    options: {taluk?: string; savedCropIds?: string[]; forceRefresh?: boolean} = {},
+    prefs?: WeatherAlertPrefs,
+    options: WeatherFetchOptions = {},
   ): Promise<WeatherSnapshot> {
-    const qs = new URLSearchParams({
-      locationId: location.id,
-      prefRain: alertPrefs.rain ? '1' : '0',
-      prefHeavyRain: alertPrefs.heavyRain ? '1' : '0',
-      prefTemp: alertPrefs.temperature ? '1' : '0',
-      prefWind: alertPrefs.wind ? '1' : '0',
-      prefDaily: alertPrefs.dailyForecast ? '1' : '0',
-    });
-    if (options.taluk) qs.set('taluk', options.taluk);
-    if (options.savedCropIds && options.savedCropIds.length > 0) {
-      qs.set('crops', options.savedCropIds.join(','));
-    }
-    if (options.forceRefresh) qs.set('refresh', '1');
+    const state = (options.state || location.state).trim();
+    const district = (options.district || location.district).trim();
+    const taluk = (options.taluk || location.taluks[0] || '').trim();
+    const cacheKey = buildLocationCacheKey(state, district, taluk);
+    const flightKey = `${cacheKey}|${options.forceRefresh ? 'refresh' : 'normal'}`;
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 9000);
-      const res = await fetch(`/api/weather/forecast?${qs.toString()}`, {
-        signal: controller.signal,
+    const existingFlight = inFlightClientRequests.get(flightKey);
+    if (existingFlight) {
+      return existingFlight;
+    }
+
+    const requestPromise = (async (): Promise<WeatherSnapshot> => {
+      const params = new URLSearchParams({
+        locationId: location.id,
+        state,
+        district,
       });
-      window.clearTimeout(timeoutId);
-
-      const data = (await res.json()) as WeatherSnapshot & {error?: string};
-      if (!res.ok) {
-        throw new Error(data.error || `Weather service HTTP ${res.status}`);
+      if (taluk) {
+        params.set('taluk', taluk);
+      }
+      if (options.savedCropIds && options.savedCropIds.length > 0) {
+        params.set('crops', options.savedCropIds.slice(0, 30).join(','));
+      }
+      if (options.forceRefresh) {
+        params.set('refresh', '1');
+      }
+      if (prefs) {
+        params.set('prefRain', prefs.rain ? '1' : '0');
+        params.set('prefHeavyRain', prefs.heavyRain ? '1' : '0');
+        params.set('prefTemp', prefs.temperature ? '1' : '0');
+        params.set('prefWind', prefs.wind ? '1' : '0');
+        params.set('prefDaily', prefs.dailyForecast ? '1' : '0');
       }
 
-      this.writeCache(location.id, data);
-      return data;
-    } catch (err: unknown) {
-      // Never silently fabricate fake weather! Use last verified browser cache with explicit stale flag if available
-      const cached = this.readCache(location.id);
-      if (cached) {
-        return {
-          ...cached,
-          source: 'cached',
-          officialProvider: 'cached_open_meteo',
-          sourceLabel: `${cached.sourceLabel.replace(/\s*\(Cached\)$/i, '')} (Cached)`,
-          isStale: true,
-          staleReason:
-            'Unable to reach live weather server right now; showing your last verified forecast.',
-        };
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), CLIENT_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(`/api/weather/forecast?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        window.clearTimeout(timeout);
+
+        const data = (await res.json().catch(() => ({}))) as WeatherSnapshot & {error?: string};
+        if (!res.ok) {
+          throw new Error(data.error || `Weather server returned ${res.status}`);
+        }
+        if (!data || !Array.isArray(data.forecast) || data.forecast.length === 0) {
+          throw new Error('Weather server returned an incomplete forecast.');
+        }
+
+        writeCachedWeather(cacheKey, data);
+        return data;
+      } catch (err: unknown) {
+        window.clearTimeout(timeout);
+        const cached = readCachedWeather(cacheKey);
+        const errMessage =
+          err instanceof DOMException && err.name === 'AbortError'
+            ? 'Weather search timed out while waiting for Gemini Search grounding.'
+            : err instanceof Error && err.message
+              ? err.message
+              : 'Unable to fetch live weather via Gemini Search right now.';
+
+        if (cached) {
+          return {
+            ...cached.snapshot,
+            source: 'cached',
+            officialProvider: 'cached_gemini_google_search',
+            sourceLabel: `Cached Gemini Weather · ${cached.snapshot.primarySourceName || 'Previous Verified Snapshot'}`,
+            isStale: true,
+            staleReason: `${errMessage} Showing your last verified forecast from ${cached.snapshot.observationDate || cached.snapshot.updatedAt}.`,
+          };
+        }
+
+        throw new Error(errMessage);
+      } finally {
+        inFlightClientRequests.delete(flightKey);
       }
-      const message =
-        err instanceof Error
-          ? err.message
-          : 'Live weather forecast could not be loaded. Check your connection and retry.';
-      throw new Error(message);
-    }
+    })();
+
+    inFlightClientRequests.set(flightKey, requestPromise);
+    return requestPromise;
   }
 }
 
-export const weatherProvider: WeatherDataProvider = new BackendWeatherProvider();
+export const weatherProvider: WeatherProvider = new DynamicWeatherProvider();

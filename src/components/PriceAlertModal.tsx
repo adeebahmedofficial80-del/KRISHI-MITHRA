@@ -21,7 +21,10 @@ export function PriceAlertModal({crop, cropDisplayName, onClose, onSave}: PriceA
 
   useEffect(() => {
     if (crop) {
-      setTargetPrice(String(Math.round(crop.modalPrice * 1.1)));
+      const initialTarget = crop.hasVerifiedPrice
+        ? Math.max(1, Math.round(crop.modalPrice * 1.1))
+        : 25;
+      setTargetPrice(String(initialTarget));
       setCondition('above');
     }
   }, [crop]);
@@ -59,7 +62,9 @@ export function PriceAlertModal({crop, cropDisplayName, onClose, onSave}: PriceA
                 Set Price Alert
               </h3>
               <p className="text-xs text-[#6B756A]">
-                {cropDisplayName} · Today ₹{crop.modalPrice}/kg
+                {crop.hasVerifiedPrice
+                  ? `${cropDisplayName} · Latest verified ₹${crop.modalPrice}/kg`
+                  : `${cropDisplayName} · Set your target mandi price`}
               </p>
             </div>
           </div>
