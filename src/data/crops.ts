@@ -1,6 +1,8 @@
 import {CropProduct, MarketPriceEntry, PriceHistoryPoint} from '../types/krishi';
+import {CROP_CATALOG_META} from './cropCatalogMeta';
+import {EXPANDED_CROP_PRODUCTS} from './expandedCrops';
 
-const UPDATED_DATE = '18 Nov 2026';
+const UPDATED_DATE = 'Reference baseline';
 
 function buildHistorySeries(
   baseModal: number,
@@ -70,7 +72,7 @@ function buildComparisons(
   });
 }
 
-export const CROP_PRODUCTS: CropProduct[] = [
+const BASE_CROP_PRODUCTS: CropProduct[] = [
   // ======================== 10 VEGETABLES ========================
   {
     id: 'tomato',
@@ -1372,6 +1374,28 @@ export const CROP_PRODUCTS: CropProduct[] = [
     ],
     relatedCropIds: ['papaya', 'banana', 'pineapple'],
   },
+];
+
+const ENRICHED_BASE_CROPS: CropProduct[] = BASE_CROP_PRODUCTS.map((crop) => {
+  const meta = CROP_CATALOG_META.find((m) => m.id === crop.id);
+  return {
+    ...crop,
+    regionalNames: meta?.regionalNames ?? [],
+    varieties: crop.variety.split('/').map((v) => v.trim()).filter(Boolean),
+    modalPriceQuintal: crop.modalPrice * 100,
+    minimumPriceQuintal: crop.minimumPrice * 100,
+    maximumPriceQuintal: crop.maximumPrice * 100,
+    dataSource: 'catalog_reference',
+    isStale: true,
+    hasComparableHistory: false,
+    priceChangeAbsolute: null,
+    previousComparablePrice: null,
+  };
+});
+
+export const CROP_PRODUCTS: CropProduct[] = [
+  ...ENRICHED_BASE_CROPS,
+  ...EXPANDED_CROP_PRODUCTS,
 ];
 
 export const VEGETABLE_CROPS = CROP_PRODUCTS.filter((c) => c.category === 'vegetable');

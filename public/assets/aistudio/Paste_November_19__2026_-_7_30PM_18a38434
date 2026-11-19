@@ -1,0 +1,982 @@
+# KRISHI-MITHRA — COMPLETE APPLICATION UPGRADE, CODE AUDIT AND PRODUCTION IMPLEMENTATION
+
+Act as a senior full-stack software architect, experienced React/TypeScript engineer, Google Gemini integration specialist, agricultural data engineer, UI/UX designer and application security engineer.
+
+You are working on my EXISTING project, KRISHI-MITHRA.
+
+The website has already been developed. I do not want you to discard the existing application, generate an unrelated replacement or unnecessarily redesign the entire interface.
+
+Your responsibility is to inspect the complete existing project, identify its technical problems, repair the existing code, implement the requirements below and deliver a fully functional, integrated application.
+
+This is an implementation task, not a request for suggestions, an explanation, a mockup or a demonstration.
+
+## SECTION 1 — NON-NEGOTIABLE IMPLEMENTATION RULES
+
+Before modifying anything:
+
+1. Inspect the entire project structure and identify the frontend framework, programming language, backend, authentication provider, database, API integrations, existing Gemini configuration, environment variables and routing architecture.
+2. Inspect every relevant component, service, hook, database interaction, API endpoint and authentication flow.
+3. Identify existing errors, incomplete functionality, broken imports, incorrect types, missing dependencies, duplicate logic, security vulnerabilities and inconsistent data handling.
+4. Preserve working features and existing integrations.
+5. Use the existing technology stack wherever practical. Do not introduce an unnecessary framework migration or replace the current backend.
+6. Reuse existing components and database structures, extending them safely wherever possible.
+7. Do not create fake integrations or pretend that an API is connected when it is not.
+8. Never expose secret API keys, OAuth client secrets or backend credentials in frontend code.
+9. Do not replace real-time data with hardcoded sample information.
+10. Implement the changes directly in the project files, not just by producing code snippets in your response.
+
+If a necessary external credential or API permission is unavailable, implement the integration structure and clearly identify the missing configuration. Never fabricate successful API responses.
+
+---
+
+# SECTION 2 — NEW USER REGISTRATION AND GOOGLE AUTHENTICATION
+
+This is the first and most important change.
+
+Currently, users can enter the website without the personalized account experience that I require.
+
+Completely restructure the entry flow.
+
+### 2.1 First screen: Sign in to KRISHI-MITHRA
+
+When anyone opens the website without an authenticated session, the first screen must be a professional login and registration interface.
+
+Do not show the dashboard before authentication.
+
+The screen must include:
+
+- Official KRISHI-MITHRA logo.
+- Brand name and a short introduction.
+- A required input field asking: "What should we call you?"
+- Placeholder: "Enter your name"
+- A prominent "Continue with Google" button.
+- Professional Google authentication styling.
+- Proper validation and error handling.
+
+The farmer's name is compulsory.
+
+The user must enter their preferred name before proceeding with Google authentication. Do not allow an empty name.
+
+### 2.2 Google authentication
+
+Implement actual Google OAuth authentication using the existing authentication infrastructure.
+
+The expected sequence is:
+
+1. User opens the website.
+2. User enters their preferred name.
+3. User presses Continue with Google.
+4. Google authentication opens.
+5. User chooses their Google account and grants the required permissions.
+6. On successful authentication, create or update the corresponding farmer profile.
+7. Associate the preferred name with the authenticated user's unique account ID.
+8. Save the profile in the existing database.
+9. Start the first-time welcome experience.
+
+The preferred name supplied by the farmer must be retained even if it differs from the Google account display name.
+
+Use the authenticated user's unique identifier as the database relationship key.
+
+Prevent duplicate profiles when existing users sign in repeatedly.
+
+Returning users must not be forced to register again.
+
+Handle:
+- OAuth cancellation.
+- Authentication failure.
+- Invalid sessions.
+- Duplicate accounts.
+- Network failures.
+- Expired sessions.
+- Database write failures.
+
+Never create a permanent farmer profile for an unsuccessful authentication attempt.
+
+### 2.3 Farmer profile data
+
+Store and retrieve the following profile information wherever supported by the existing database:
+
+- User ID.
+- Preferred farmer name.
+- Google account email.
+- Profile creation date.
+- Last login timestamp.
+- State.
+- District.
+- Taluk or local area, where available.
+- Preferred nearby mandi or market.
+- Saved vegetable crops.
+- Saved fruit crops.
+- User preferences.
+
+Use secure database access policies so each authenticated farmer can access and modify only their own private profile and saved crop preferences.
+
+### 2.4 Location onboarding
+
+Market prices and weather forecasts must be relevant to the farmer's actual location.
+
+If the existing user profile does not have a location, provide a simple first-time location setup.
+
+Allow selection of:
+
+- State.
+- District.
+- Taluk or locality.
+- Preferred nearby agricultural market.
+
+Do not permanently hardcode Bengaluru Rural, Karnataka, simply because it appears in the current preview screenshot.
+
+Allow farmers to change their location later through settings.
+
+---
+
+# SECTION 3 — FIRST-TIME GRAND OPENING EXPERIENCE
+
+After successful Google authentication and profile creation, introduce a beautiful welcome experience before opening the dashboard.
+
+This is the first impression of KRISHI-MITHRA.
+
+Create an elegant, short introductory screen using the supplied official logo.
+
+### Opening sequence
+
+Display the logo with a tasteful animation.
+
+Use a refined agricultural visual identity, with subtle transitions, soft natural colours and professional typography.
+
+The welcome copy should read:
+
+"Welcome to KRISHI-MITHRA"
+
+"Your trusted agricultural companion. Bringing market intelligence, weather insights and smarter farming decisions closer to you."
+
+Then personalize the introduction:
+
+"Good morning, [FARMER NAME]!"
+
+"Welcome aboard, [FARMER NAME]. Your farming journey just became smarter. Let's make today's decisions count."
+
+Use the appropriate greeting for the time of day.
+
+Provide a clear "Enter Dashboard" button.
+
+The entire introduction should feel premium, welcoming and professional. Avoid excessive animations, unnecessary loading screens or long delays.
+
+Show this grand-opening experience only during the first successful account setup.
+
+For returning users, provide a shorter personalized welcome rather than repeating the complete introduction.
+
+Respect browser audio autoplay restrictions. Do not assume that voice playback is permitted before the user interacts with the interface.
+
+---
+
+# SECTION 4 — PERSONALIZED DASHBOARD
+
+Preserve the existing dashboard's overall visual identity.
+
+The current design has:
+- A top navigation area.
+- Location information.
+- A personalized greeting area.
+- Market prices.
+- Today's weather.
+- Farm advisory.
+- My Crops.
+- A Listen button.
+- A navigation bar.
+
+Improve this existing dashboard instead of replacing it unnecessarily.
+
+### 4.1 Personalized greeting
+
+Replace:
+
+"Good morning, farmer!"
+
+With:
+
+"Good morning, [FARMER NAME]!"
+
+The greeting must be dynamically retrieved from the authenticated user's saved profile.
+
+The name must also appear correctly in the voice briefing.
+
+Never use a generic "farmer" greeting when the account has a valid preferred name.
+
+### 4.2 Market prices card
+
+This is a major functional change.
+
+The existing application displays:
+
+"20 crops tracked"
+
+Remove the hardcoded number and all hardcoded crop counts.
+
+Initially, a newly registered user must see:
+
+"0 crops tracked"
+
+"Start selecting the crops you want to monitor."
+
+Only count crops that the authenticated user has explicitly saved.
+
+When the farmer selects a vegetable or fruit, update the count immediately.
+
+When a farmer removes a crop, decrease the count accordingly.
+
+Do not automatically monitor every crop in the catalogue.
+
+### 4.3 Today's weather
+
+Display actual weather information for the farmer's saved location.
+
+Use real weather data, including available information such as:
+
+- Current temperature.
+- Weather conditions.
+- Rain probability or available rainfall forecast.
+- Humidity.
+- Wind conditions.
+- Important weather warnings.
+- Upcoming forecast.
+
+Display the observation or forecast update time.
+
+Never use hardcoded temperatures or simulated rain probabilities.
+
+### 4.4 Farm advisory
+
+Remove hardcoded advisory counts such as "3 active updates".
+
+Only display genuine active advisories based on the farmer's location, available agricultural data and weather conditions.
+
+Personalize recommendations wherever relevant to the farmer's selected crops.
+
+Examples include:
+
+- Rainfall preparation.
+- Irrigation timing.
+- Harvest planning.
+- Weather-related transportation precautions.
+- Crop-specific official advisories.
+
+Do not invent pesticide doses, chemical recommendations or unsupported agricultural instructions.
+
+Clearly distinguish official advisories from AI-generated suggestions.
+
+### 4.5 My Crops
+
+Initially display:
+
+"0 crops saved"
+
+After the farmer adds crops, show the actual saved crop count and any configured price alerts.
+
+All counts must be calculated from the authenticated user's database records.
+
+---
+
+# SECTION 5 — COMPLETE MARKETPLACE AND CROP SELECTION SYSTEM
+
+The current application must not be restricted to 20 predefined crops.
+
+Build a comprehensive marketplace catalogue for Indian farmers.
+
+### 5.1 Crop categories
+
+Create two primary categories:
+
+A. Vegetables
+
+Include a comprehensive selection of vegetables available in Indian agricultural markets, such as:
+
+- Tomato.
+- Onion.
+- Potato.
+- Brinjal.
+- Cabbage.
+- Cauliflower.
+- Green chilli.
+- Capsicum.
+- Carrot.
+- Radish.
+- Beans.
+- Ladies' finger.
+- Cucumber.
+- Bottle gourd.
+- Bitter gourd.
+- Ridge gourd.
+- Pumpkin.
+- Spinach.
+- Coriander.
+- Drumstick.
+- Green peas.
+- Garlic.
+- Ginger.
+- Sweet potato.
+
+B. Fruits
+
+Include:
+
+- Mango.
+- Banana.
+- Apple.
+- Orange.
+- Grapes.
+- Pomegranate.
+- Papaya.
+- Watermelon.
+- Muskmelon.
+- Guava.
+- Pineapple.
+- Lemon.
+- Sapota.
+- Jackfruit.
+- Coconut.
+- Strawberry.
+- Custard apple.
+- Pear.
+- Dragon fruit.
+- Other commercially traded fruits.
+
+This is a starting catalogue, not a restrictive list.
+
+Expand the catalogue through actual available commodity and variety records.
+
+Support regional names and common Indian crop names where practical.
+
+### 5.2 Marketplace interface
+
+Build an efficient search-and-selection experience.
+
+Include:
+
+- Search bar.
+- Vegetable and fruit filters.
+- Crop names.
+- Available varieties.
+- Add to My Crops button.
+- Selected indicator.
+- Remove from My Crops option.
+- Relevant market or mandi selection.
+
+Farmers should be able to search the entire catalogue without navigating through hundreds of unnecessary pages.
+
+### 5.3 Personal crop monitoring
+
+A farmer must explicitly choose which crops to monitor.
+
+For example:
+
+A farmer selects Tomato, Onion, Mango and Banana.
+
+Only those four crops should appear in the personal monitoring dashboard.
+
+The system must store these selections separately for every authenticated user.
+
+Different users must have independent crop watchlists.
+
+The farmer must be able to add or remove crops whenever required.
+
+Where supported by the source data, allow variety-specific monitoring.
+
+### 5.4 Dynamic crop pricing
+
+For each selected crop, retrieve genuine market information, including available:
+
+- Market or mandi name.
+- Commodity name.
+- Variety.
+- Minimum price.
+- Maximum price.
+- Modal price.
+- Date of market observation.
+- Unit of measurement.
+- Previous available comparable price.
+- Price movement percentage.
+
+Clearly identify whether the price is per quintal, kilogram or another source-defined unit.
+
+Do not compare prices belonging to different markets, varieties, dates or units without appropriate normalization.
+
+Create historical price records so farmers can examine daily changes and historical trends.
+
+---
+
+# SECTION 6 — REAL MARKET DATA AND DAILY UPDATES
+
+This system must use actual agricultural market information.
+
+Do not build a static market-price interface.
+
+### 6.1 Preferred data source
+
+Investigate and implement the official Government of India market data available through:
+
+AGMARKNET and the Open Government Data Platform:
+
+https://data.gov.in/
+
+Relevant dataset:
+
+Current Daily Price of Various Commodities from Various Markets (Mandi).
+
+Also investigate:
+
+Variety-wise Daily Market Prices Data of Commodity.
+
+The market data pipeline should use the actual available API/resource documentation, including resource identifiers and the correct query parameters.
+
+Do not guess API endpoints or field names.
+
+The dataset provides daily wholesale minimum, maximum and modal price information.
+
+Use the official data.gov.in API registration and API-key mechanism where required.
+
+### 6.2 Backend market-data pipeline
+
+Create or improve a reusable market data service.
+
+Its responsibilities:
+
+1. Retrieve available market data from the authoritative source.
+2. Validate the response.
+3. Normalize commodity, variety, location, date and price fields.
+4. Store the data in the existing database.
+5. Update existing records without creating unnecessary duplicates.
+6. Preserve historical observations.
+7. Make the latest information available to the dashboard.
+8. Retrieve only the user's selected crop records for personalized monitoring.
+
+Do not expose the data.gov.in API key in browser JavaScript.
+
+Use server-side environment variables or secure backend secrets.
+
+### 6.3 Automatic update schedule
+
+Implement a scheduled daily synchronization process using the existing backend's supported scheduling mechanism.
+
+Also implement a controlled manual refresh mechanism.
+
+Do not assume that the government source publishes every commodity price at exactly the same time every day.
+
+Display:
+
+- Last successful synchronization.
+- Source observation date.
+- Latest available market data.
+- A clear stale-data indicator when the data has not been updated.
+
+When the source is unavailable, preserve the last verified observation and clearly indicate its age.
+
+Never label yesterday's price as today's price.
+
+### 6.4 Market movement analysis
+
+Calculate price movements only from comparable historical records.
+
+Display whether the price:
+
+- Increased.
+- Decreased.
+- Remained relatively stable.
+
+Show the actual absolute and percentage change wherever reliable comparison data exists.
+
+Never generate fictitious market changes.
+
+### 6.5 Important distinction
+
+The marketplace may contain a broad catalogue of available Indian vegetables, fruits and varieties.
+
+However, the personal tracking dashboard must display only the crops selected by the individual farmer.
+
+General regional fruit and vegetable market intelligence can still be used in the daily briefing without automatically adding those crops to the farmer's personal watchlist.
+
+---
+
+# SECTION 7 — DYNAMIC WEATHER AND AGRICULTURAL ADVISORY
+
+Use verified weather sources.
+
+Investigate the official India Meteorological Department API documentation:
+
+https://api.imd.gov.in/public/api_reference.html
+
+Implement supported services where available:
+
+- Current weather.
+- Seven-day city forecast.
+- Location-based forecast.
+- District-wise nowcasting.
+- District weather warnings.
+- Agromet agricultural advisories.
+
+Use the farmer's selected state, district and available location coordinates to retrieve relevant information.
+
+### Required functionality
+
+Display current weather conditions and upcoming forecasts.
+
+Provide relevant alerts for:
+
+- Rain.
+- Heavy rainfall.
+- Thunderstorms.
+- Lightning.
+- Strong winds.
+- Heat-related conditions.
+- Other official warnings relevant to the farmer's district.
+
+Generate crop-sensitive advisory suggestions using the farmer's saved crops and verified weather information.
+
+Examples:
+
+- Whether expected rainfall may affect harvesting.
+- Whether irrigation should be reconsidered based on available information.
+- Whether farmers should prepare for official severe-weather warnings.
+- Whether transport and storage planning requires attention.
+
+Do not treat an AI-generated recommendation as an official IMD warning.
+
+Show the information source and its issue or observation time.
+
+Confirm API access conditions and licensing before enabling production or commercial use.
+
+---
+
+# SECTION 8 — GEMINI-POWERED LISTEN BUTTON
+
+This is one of the most important features.
+
+The current dashboard contains a button called "Listen".
+
+Make it genuinely functional.
+
+When the farmer presses Listen, KRISHI-MITHRA must prepare a personalized daily agricultural briefing and read it aloud.
+
+The briefing must not be a static prerecorded sentence.
+
+It must use the latest verified information available for that farmer.
+
+### 8.1 What the Listen button must do
+
+When pressed:
+
+1. Retrieve the authenticated farmer's preferred name.
+2. Retrieve their saved location.
+3. Retrieve their selected crops.
+4. Access the latest available market-price information.
+5. Access the current weather and forecast.
+6. Retrieve relevant official weather alerts and agricultural advisories.
+7. Analyze broader available vegetable and fruit market movements for the farmer's relevant region.
+8. Send the verified information to Gemini.
+9. Generate a short, natural and personalized spoken briefing.
+10. Play the generated briefing using the configured voice system.
+
+Market, weather and advisory data retrieval should happen through backend services, not through an unverified model response.
+
+Gemini's job is to interpret and summarize that information.
+
+### 8.2 Daily briefing content
+
+The voice briefing must cover the following subjects according to importance:
+
+**First: Personalized greeting**
+
+"Good morning, [FARMER NAME]!"
+
+**Second: Overall vegetable market**
+
+Summarize meaningful price movements across available regional vegetable markets.
+
+For example, if tomato prices have increased significantly or onion prices have declined, communicate the observation, market, price and relevant date.
+
+Do not restrict the briefing to an arbitrary list of 20 crops.
+
+**Third: Overall fruit market**
+
+Summarize important fruit-market developments where reliable information is available.
+
+**Fourth: Farmer's selected crops**
+
+Give priority to movements affecting the farmer's saved crops.
+
+**Fifth: Weather**
+
+Explain today's important weather conditions, rainfall forecasts and relevant warnings.
+
+**Sixth: Practical farm advisory**
+
+Provide one or two useful, source-supported suggestions for the day.
+
+**Final: Friendly closing**
+
+End with a short personalized sentence encouraging the farmer to have a productive day.
+
+Do not read out every available commodity or produce an excessively long report.
+
+Prioritize important changes.
+
+Target approximately 35–55 seconds of spoken content, depending on the amount of meaningful information.
+
+### 8.3 Short Gemini pre-prompt
+
+Use the following as the core summarization instruction for the Listen feature:
+
+"You are KRISHI-MITHRA, a trusted Indian agricultural companion. Using only the latest verified market prices, regional vegetable and fruit market movements, the farmer's selected crops, official weather forecasts and agricultural advisories supplied in the data, create a brief, natural daily spoken update. Address the farmer personally by their saved name. Highlight only meaningful market changes, important weather conditions and practical actions for today. Prioritize their selected crops while also covering broader regional market trends. Never invent prices, dates, forecasts or advisories. Clearly acknowledge unavailable or outdated information. Speak warmly, simply and concisely in approximately 35–55 seconds."
+
+This instruction should be kept short to reduce unnecessary model processing.
+
+### 8.4 Speed optimization
+
+The Listen feature must be fast.
+
+Do not make Gemini independently discover and retrieve every external market and weather API from scratch whenever the farmer presses the button.
+
+Instead:
+
+- Maintain refreshed market and weather snapshots on the backend.
+- Cache verified source data.
+- Retrieve market and weather information concurrently.
+- Construct a compact data payload.
+- Send only the relevant records to Gemini.
+- Cache a generated briefing for the same user, date and location where appropriate.
+- Regenerate when important underlying information changes or the cache expires.
+- Avoid duplicate requests caused by repeated button presses.
+
+Use a loading indicator such as:
+
+"Preparing your morning update..."
+
+Provide appropriate playback controls:
+
+- Play.
+- Pause.
+- Resume.
+- Stop.
+
+If audio generation fails, display the generated text summary and offer a retry.
+
+Use the existing Gemini audio/TTS integration if available. Otherwise, implement an appropriate supported voice playback fallback.
+
+Ensure there is no overlapping audio.
+
+### 8.5 Voice personality
+
+The voice should be:
+
+- Warm.
+- Friendly.
+- Respectful.
+- Clear.
+- Easy to understand.
+- Natural for Indian farmers.
+
+Never sound like a robotic newsreader.
+
+The farmer's name must be included naturally.
+
+---
+
+# SECTION 9 — UI AND BRAND IDENTITY
+
+Use the latest supplied KRISHI-MITHRA logo as the official logo.
+
+Do not recreate, reinterpret, distort, stretch or replace the logo with a generated substitute.
+
+Use the full logo artwork on:
+
+- Sign-in screen.
+- Grand-opening screen.
+- Appropriate welcome or branding sections.
+
+For compact navigation, use an existing emblem-only asset if available, or a properly derived compact crop that preserves the original symbol. Do not squeeze the full wordmark into a tiny icon.
+
+Preserve a coherent visual identity throughout the application.
+
+### Design direction
+
+Maintain the existing clean, premium agricultural dashboard design.
+
+Recommended characteristics:
+
+- Deep agricultural green.
+- Leaf green.
+- Soft off-white backgrounds.
+- Restrained orange accents.
+- Clear typography.
+- Rounded but professional cards.
+- Subtle shadows.
+- Consistent icons.
+- Responsive spacing.
+- Excellent readability.
+
+Avoid turning the entire website into an unnecessarily dark interface.
+
+Maintain desktop, tablet and mobile compatibility.
+
+Do not allow overlapping navigation elements, clipped text, overflowing cards or broken responsive layouts.
+
+Keep the Listen button visually prominent.
+
+---
+
+# SECTION 10 — DATABASE AND BACKEND INTEGRATION
+
+Inspect the existing database before introducing new tables or migrations.
+
+Extend the current architecture instead of creating conflicting or duplicate data structures.
+
+The functionality should support the following logical entities:
+
+1. Farmer profiles.
+2. Farmer crop watchlists.
+3. Commodity and variety catalogue.
+4. Market price observations.
+5. Historical market prices.
+6. Farmer-selected market preferences.
+7. Weather observations.
+8. Weather forecasts and warnings.
+9. Agricultural advisories.
+10. Daily briefing cache.
+
+Each farmer's saved crop preferences must be linked to their authenticated user ID.
+
+Market observations should retain their source, location, commodity, variety, unit and observation date.
+
+Weather observations should retain their location, source and observation timestamp.
+
+Implement appropriate database indexes, unique constraints, validation and access policies.
+
+Use database migrations rather than silently modifying production data.
+
+Do not delete existing farmer records or existing working information.
+
+---
+
+# SECTION 11 — COMPLETE CODE AUDIT AND ERROR REPAIR
+
+This is mandatory.
+
+I do not want you to implement these features on top of broken code.
+
+Inspect the entire existing codebase and fix all identifiable errors within the scope of the application.
+
+Check the following:
+
+**Frontend**
+- React component errors.
+- Incorrect state management.
+- Broken routes.
+- Rendering failures.
+- Invalid imports and exports.
+- TypeScript errors.
+- Incorrect event handlers.
+- Missing keys in lists.
+- Unhandled promise rejections.
+- Incorrect form validation.
+- Broken responsive layout.
+- UI components that do not perform their stated functions.
+
+**Authentication**
+- Broken Google OAuth.
+- Incorrect authentication callback.
+- Session persistence errors.
+- Duplicate profile creation.
+- Incorrect user-to-profile relationships.
+- Unauthorized access.
+
+**Backend**
+- Incorrect API routes.
+- Invalid request and response schemas.
+- Broken database queries.
+- Incorrect server-side validation.
+- Missing error handling.
+- Authentication and authorization failures.
+- API timeout problems.
+- Data synchronization failures.
+
+**Gemini integration**
+- Invalid model configuration.
+- Incorrect API calls.
+- Missing response validation.
+- Broken audio generation.
+- Incorrect prompt construction.
+- Excessive duplicate requests.
+- Missing fallback handling.
+
+**Market and weather services**
+- Incorrect API endpoints.
+- Invalid credentials.
+- Wrong field mappings.
+- Incorrect units.
+- Date and timezone errors.
+- Stale-data handling.
+- Incomplete data synchronization.
+
+**Security**
+- Exposed secrets.
+- Missing authorization checks.
+- Insecure user-specific database access.
+- Incorrect environment variable handling.
+- Improper validation of external API responses.
+
+Do not suppress errors simply to make the application appear functional.
+
+Do not use broad TypeScript `any` types as a shortcut.
+
+Do not disable linting, type checking or security protections to hide problems.
+
+Preserve useful existing code and repair the underlying causes.
+
+---
+
+# SECTION 12 — TESTING AND ACCEPTANCE REQUIREMENTS
+
+After implementing the changes, verify the entire application.
+
+### Authentication testing
+
+- Unauthenticated users see the login screen first.
+- Empty farmer names are rejected.
+- Google sign-in works.
+- Successful authentication creates the correct profile.
+- Existing users can sign in again.
+- Each user sees their own data.
+
+### First-time experience
+
+- First login displays the grand-opening experience.
+- The correct farmer name appears.
+- Dashboard navigation works.
+- Returning users do not repeatedly see the complete introduction.
+
+### Dashboard testing
+
+- Greeting uses the actual saved name.
+- New accounts show zero tracked crops.
+- My Crops initially shows zero saved crops.
+- Counts change correctly when crops are added or removed.
+- Market prices are not hardcoded.
+- Weather is retrieved from the selected location.
+- Advisory counts reflect actual records.
+
+### Marketplace testing
+
+- Vegetable and fruit categories work.
+- Search works.
+- Crops can be added and removed.
+- Selections persist after logout and login.
+- Different accounts have independent watchlists.
+- Only saved crops appear in personal monitoring.
+
+### Dynamic data testing
+
+- Market data can be retrieved.
+- Market observations are correctly normalized.
+- Historical comparisons are valid.
+- Automatic synchronization works.
+- Stale data is clearly identified.
+- Weather forecasts and official warnings are displayed correctly.
+
+### Listen testing
+
+- The Listen button retrieves the correct farmer's name.
+- The briefing uses actual available market data.
+- It includes important vegetable and fruit market movements.
+- It includes relevant saved crops.
+- It includes current weather.
+- It generates a natural spoken update.
+- Repeated clicks do not produce overlapping audio.
+- Failures are handled gracefully.
+
+### Technical verification
+
+Run all available:
+
+- Build checks.
+- TypeScript checks.
+- ESLint checks.
+- Unit tests.
+- Integration tests.
+- Authentication tests.
+- Database validation.
+- Relevant end-to-end tests.
+
+Resolve all blocking and critical errors.
+
+Do not claim that the application is production-ready if required tests or external integrations remain unverified.
+
+---
+
+# SECTION 13 — IMPLEMENTATION PRIORITY
+
+Execute the work in this order:
+
+**Priority 1:**
+Inspect the existing codebase, fix blocking errors and establish reliable authentication.
+
+**Priority 2:**
+Implement farmer-name registration, profile persistence and the first-time grand-opening experience.
+
+**Priority 3:**
+Connect personalized dashboard data and crop selection.
+
+**Priority 4:**
+Implement real market-price ingestion and daily synchronization.
+
+**Priority 5:**
+Implement real weather, warnings and agricultural advisory integration.
+
+**Priority 6:**
+Implement Gemini-powered daily voice briefing and optimize its response time.
+
+**Priority 7:**
+Complete UI refinements, security checks and end-to-end testing.
+
+Do not leave essential functionality as a placeholder while spending time on decorative changes.
+
+# SECTION 14 — FINAL DELIVERY REPORT
+
+When implementation is complete, provide a concise but detailed technical report containing:
+
+1. What was wrong with the original project.
+2. Which errors were identified.
+3. Which errors were fixed.
+4. Which files were modified.
+5. Which new files were created.
+6. Which database changes were implemented.
+7. How Google authentication works.
+8. How farmer profiles and crop selections are stored.
+9. Which real market data sources were integrated.
+10. Which weather APIs were integrated.
+11. How daily synchronization operates.
+12. How the Gemini Listen feature generates and plays briefings.
+13. Which environment variables and external credentials are still required.
+14. Which tests were successfully completed.
+15. Any remaining blockers or limitations.
+
+Distinguish between functionality that is fully implemented, functionality that has been tested, and functionality that still requires external credentials or deployment configuration.
+
+## FINAL INSTRUCTION
+
+I want a properly integrated KRISHI-MITHRA application, not a collection of disconnected features.
+
+The complete user journey must work:
+
+OPEN WEBSITE → GOOGLE SIGN-IN + FARMER NAME → PROFILE CREATION → GRAND OPENING → PERSONALIZED DASHBOARD → SELECT CROPS → DAILY MARKET MONITORING + WEATHER INTELLIGENCE → GEMINI DAILY VOICE BRIEFING.
+
+Maintain the existing project's working functionality.
+
+Implement all the requested modifications directly in the current codebase.
+
+Do not stop after analyzing the project. Proceed to implementation, testing, debugging and verification.
+
+Do not simply tell me what needs to be done. Actually do the work in the available project environment.
+
+The final result must be reliable, secure, fast, responsive and suitable for further production development.
+
+KRISHI-MITHRA should feel like a genuinely useful digital agricultural companion for Indian farmers.

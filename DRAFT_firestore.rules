@@ -42,19 +42,82 @@ service cloud.firestore {
         && prefs.dailyForecast is bool;
     }
 
-    function isValidUserPreferences(data, userId) {
-      return data.keys().hasAll(['uid', 'selectedLocationId', 'selectedLanguage', 'favoriteCropIds', 'alertPrefs', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'selectedLocationId', 'selectedLanguage', 'favoriteCropIds', 'alertPrefs', 'updatedAt'])
+    function isValidCropList(items, maxSize) {
+      return items is list
+        && items.size() <= maxSize
+        && (items.size() == 0 || (items[0] is string && items[0].size() <= 64));
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'farmerName',
+          'email',
+          'state',
+          'district',
+          'taluk',
+          'preferredMandi',
+          'selectedLocationId',
+          'selectedLanguage',
+          'favoriteCropIds',
+          'savedVegetableIds',
+          'savedFruitIds',
+          'alertPrefs',
+          'onboardingCompleted',
+          'hasSeenGrandOpening',
+          'createdAt',
+          'lastLoginAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'farmerName',
+          'email',
+          'state',
+          'district',
+          'taluk',
+          'preferredMandi',
+          'selectedLocationId',
+          'selectedLanguage',
+          'favoriteCropIds',
+          'savedVegetableIds',
+          'savedFruitIds',
+          'alertPrefs',
+          'onboardingCompleted',
+          'hasSeenGrandOpening',
+          'createdAt',
+          'lastLoginAt',
+          'updatedAt'
+        ])
         && data.uid is string
         && data.uid == userId
         && data.uid.size() >= 1
         && data.uid.size() <= 128
+        && data.farmerName is string
+        && data.farmerName.size() >= 1
+        && data.farmerName.size() <= 80
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 160
+        && data.email == request.auth.token.email
+        && data.state is string
+        && data.state.size() <= 80
+        && data.district is string
+        && data.district.size() <= 80
+        && data.taluk is string
+        && data.taluk.size() <= 80
+        && data.preferredMandi is string
+        && data.preferredMandi.size() <= 100
         && isValidSlug(data.selectedLocationId)
         && data.selectedLanguage in ['en', 'kn', 'hi', 'te', 'ta']
-        && data.favoriteCropIds is list
-        && data.favoriteCropIds.size() <= 25
-        && (data.favoriteCropIds.size() == 0 || (data.favoriteCropIds[0] is string && data.favoriteCropIds[0].size() <= 64))
+        && isValidCropList(data.favoriteCropIds, 80)
+        && isValidCropList(data.savedVegetableIds, 50)
+        && isValidCropList(data.savedFruitIds, 50)
         && isValidAlertPrefs(data.alertPrefs)
+        && data.onboardingCompleted is bool
+        && data.hasSeenGrandOpening is bool
+        && data.createdAt is timestamp
+        && data.lastLoginAt is timestamp
         && data.updatedAt == request.time;
     }
 
@@ -100,11 +163,35 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
       allow list: if false;
-      allow create: if isValidId(userId) && isOwner(userId) && isValidUserPreferences(incoming(), userId);
-      allow update: if isValidId(userId) && isOwner(userId)
-        && isValidUserPreferences(incoming(), userId)
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().lastLoginAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
         && incoming().uid == existing().uid
-        && incoming().diff(existing()).affectedKeys().hasOnly(['selectedLocationId', 'selectedLanguage', 'favoriteCropIds', 'alertPrefs', 'updatedAt']);
+        && (!('createdAt' in existing()) ? incoming().createdAt == request.time : incoming().createdAt == existing().createdAt)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'farmerName',
+          'email',
+          'state',
+          'district',
+          'taluk',
+          'preferredMandi',
+          'selectedLocationId',
+          'selectedLanguage',
+          'favoriteCropIds',
+          'savedVegetableIds',
+          'savedFruitIds',
+          'alertPrefs',
+          'onboardingCompleted',
+          'hasSeenGrandOpening',
+          'createdAt',
+          'lastLoginAt',
+          'updatedAt'
+        ]);
       allow delete: if isValidId(userId) && isOwner(userId);
 
       match /alerts/{alertId} {

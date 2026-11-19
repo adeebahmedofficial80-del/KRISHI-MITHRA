@@ -953,3 +953,32 @@ export const TRANSLATIONS: Record<LanguageCode, TranslationPack> = {
   te: TE,
   ta: TA,
 };
+
+export type GreetingPeriod = 'morning' | 'afternoon' | 'evening';
+
+export function getGreetingPeriod(date = new Date()): GreetingPeriod {
+  const hour = date.getHours();
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  return 'evening';
+}
+
+const GREETINGS_BY_LANG: Record<LanguageCode, Record<GreetingPeriod, string>> = {
+  en: {morning: 'Good morning', afternoon: 'Good afternoon', evening: 'Good evening'},
+  kn: {morning: 'ಶುಭೋದಯ', afternoon: 'ಶುಭ ಮಧ್ಯಾಹ್ನ', evening: 'ಶುಭ ಸಂಜೆ'},
+  hi: {morning: 'सुप्रभात', afternoon: 'नमस्ते', evening: 'शुभ संध्या'},
+  te: {morning: 'శుభోదయం', afternoon: 'శుభ మధ్యాహ్నం', evening: 'శుభ సాయంత్రం'},
+  ta: {morning: 'காலை வணக்கம்', afternoon: 'மதிய வணக்கம்', evening: 'மாலை வணக்கம்'},
+};
+
+export function getTimeBasedGreeting(
+  language: LanguageCode,
+  farmerName?: string | null,
+  date = new Date(),
+): string {
+  const period = getGreetingPeriod(date);
+  const base = GREETINGS_BY_LANG[language]?.[period] ?? GREETINGS_BY_LANG.en[period];
+  const cleanName = (farmerName || '').trim();
+  return cleanName ? `${base}, ${cleanName}!` : `${base}!`;
+}
+

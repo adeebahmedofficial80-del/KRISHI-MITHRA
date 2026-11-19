@@ -1,4 +1,4 @@
-import {LanguageCode} from '../types/krishi';
+import {DailyBriefingResponse, LanguageCode} from '../types/krishi';
 
 export interface GroundingSource {
   title: string;
@@ -29,11 +29,34 @@ export async function fetchMapsApiKey(): Promise<string> {
   try {
     const res = await fetch('/api/config/maps');
     if (!res.ok) return '';
-    const data = await res.json();
+    const data = (await res.json()) as {apiKey?: unknown};
     return typeof data.apiKey === 'string' ? data.apiKey : '';
   } catch {
     return '';
   }
+}
+
+export async function fetchDailyBriefing(params: {
+  farmerName: string;
+  locationId: string;
+  state?: string;
+  district?: string;
+  taluk?: string;
+  preferredMandi?: string;
+  savedCropIds: string[];
+  language: LanguageCode;
+  forceRefresh?: boolean;
+}): Promise<DailyBriefingResponse> {
+  const res = await fetch('/api/ai/daily-briefing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as DailyBriefingResponse & {error?: string};
+  if (!res.ok) {
+    throw new Error(data?.error || 'Unable to prepare your personalized briefing right now.');
+  }
+  return data;
 }
 
 export async function fetchMandiGrounding(params: {
@@ -50,15 +73,16 @@ export async function fetchMandiGrounding(params: {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(params),
   });
-  const data = await res.json();
+  const data = (await res.json()) as MandiGroundingResult & {error?: string};
   if (!res.ok) {
     throw new Error(data?.error || 'Failed to fetch live mandi intelligence.');
   }
-  return data as MandiGroundingResult;
+  return data;
 }
 
 export async function askKrishiAdvisor(params: {
   question: string;
+  farmerName?: string;
   cropContext?: Record<string, unknown>;
   weatherContext?: Record<string, unknown>;
   locationName: string;
@@ -69,11 +93,11 @@ export async function askKrishiAdvisor(params: {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(params),
   });
-  const data = await res.json();
+  const data = (await res.json()) as AdvisorResponse & {error?: string};
   if (!res.ok) {
     throw new Error(data?.error || 'Unable to get advisor response.');
   }
-  return data as AdvisorResponse;
+  return data;
 }
 
 export async function fetchQuickSummary(params: {
@@ -86,7 +110,7 @@ export async function fetchQuickSummary(params: {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(params),
   });
-  const data = await res.json();
+  const data = (await res.json()) as {summary?: unknown; error?: string};
   if (!res.ok) {
     throw new Error(data?.error || 'Unable to generate summary.');
   }
@@ -102,9 +126,9 @@ export async function fetchTtsAudio(params: {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(params),
   });
-  const data = await res.json();
+  const data = (await res.json()) as TtsResponse & {error?: string};
   if (!res.ok) {
     throw new Error(data?.error || 'Unable to generate speech audio.');
   }
-  return data as TtsResponse;
+  return data;
 }

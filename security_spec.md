@@ -1,22 +1,22 @@
-# Security Specification — Krishi Mitra Firestore Rules
+# KRISHI-MITHRA Firestore Security Specification
 
-## 1. Data Invariants
-1. All user preferences, price alerts, and farm notes reside strictly under `/users/{userId}` and subcollections owned by `request.auth.uid`.
-2. Unauthenticated users and cross-user reads/writes are universally denied (default-deny catch-all at root).
-3. No PII (email, phone number, physical address) is stored in Firestore user documents; only preference IDs, alert numbers, and short farm notes.
-4. `uid`, `ownerUid`, `id`, and `createdAt` are immutable after creation; timestamps (`createdAt`, `updatedAt`) must equal `request.time`.
-5. Every string and list enforces strict `.size()` and regex boundaries to prevent storage abuse.
+## Collections & Access Matrix
 
-## 2. Adversarial "Dirty Dozen" Payloads (Expected: PERMISSION_DENIED)
-1. Unauthenticated read of `/users/userA`.
-2. Cross-user read of `/users/userB` while signed in as `userA`.
-3. Cross-user create in `/users/userB/alerts/alert1` while signed in as `userA`.
-4. Identity spoofing: `userA` writes `/users/userA/alerts/a1` with `ownerUid: "userB"`.
-5. Shadow field injection: `userA` writes `/users/userA` with extra `isAdmin: true`.
-6. Oversized favorite list: `favoriteCropIds` array with 26+ elements (`> 25`).
-7. Invalid language code: `selectedLanguage: "fr"` outside `["en", "kn", "hi", "te", "ta"]`.
-8. Resource poisoning ID: `alertId` exceeding 128 chars or containing invalid symbols (`../bad`).
-9. Negative or absurd price alert: `targetPrice <= 0` or `targetPrice > 100000`.
-10. Timestamp forgery: `createdAt` set to a client timestamp instead of `request.time`.
-11. Immutable field mutation: updating `ownerUid` or `createdAt` on an existing `FarmNote`.
-12. Oversized farm note content: `content.size() > 2000` or `title.size() > 120`.
+1. `/users/{userId}` (`UserProfile`)
+   - **Owner-only private profile**:
+     - `get`: Authenticated, `email_verified == true`, `request.auth.uid == userId`, valid document ID.
+     - `list`: Denied (`false`) to prevent user enumeration or PII exposure.
+     - `create`: Owner-only; must satisfy `isValidUserProfile` with `uid == userId`, `email == request.auth.token.email`, non-empty `farmerName` (1–80 chars), bounded crop lists (`favoriteCropIds <= 80`, `savedVegetableIds <= 50`, `savedFruitIds <= 50`), and server timestamps `createdAt == request.time`, `lastLoginAt == request.time`, `updatedAt == request.time`.
+     - `update`: Owner-only; immutable `uid` and immutable `createdAt` (once set); `updatedAt == request.time`; `affectedKeys().hasOnly(...)` strictly restricts mutable fields.
+     - `delete`: Owner-only.
+
+2. `/users/{userId}/alerts/{alertId}` (`PriceAlert`)
+   - Owner-only `get`, `list` (with `resource.data.ownerUid == request.auth.uid`), `create` (`createdAt == request.time`), `update` (immutable `id`, `ownerUid`, `createdAt`; strict `affectedKeys`), `delete`.
+
+3. `/users/{userId}/notes/{noteId}` (`FarmNote`)
+   - Owner-only `get`, `list` (with `resource.data.ownerUid == request.auth.uid`), `create` (`createdAt == request.time`), `update` (immutable `id`, `ownerUid`, `createdAt`; strict `affectedKeys`), `delete`.
+
+## Global Safety
+- Default-deny root rule (`match /{document=**} { allow read, write: if false; }`).
+- Verified email required for all access.
+- Server secrets (`GEMINI_API_KEY`, `DATA_GOV_IN_API_KEY`, `IMD_API_KEY`) never touch Firestore or client bundles.

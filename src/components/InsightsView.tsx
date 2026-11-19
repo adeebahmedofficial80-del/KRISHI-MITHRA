@@ -6,6 +6,7 @@ import {
   Lightbulb,
   MessageSquareShare,
   Plus,
+  RefreshCw,
   Send,
   Sparkles,
   Trash2,
@@ -14,10 +15,10 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import {useMemo, useState} from 'react';
+import React, {useCallback, useMemo, useState} from 'react';
 import {TranslationPack} from '../data/translations';
 import {askKrishiAdvisor} from '../services/aiClient';
-import {marketProvider} from '../services/marketProvider';
+import {calculateInsightsForProducts} from '../services/marketProvider';
 import {
   ChatSpace,
   fetchChatSpaces,
@@ -26,6 +27,7 @@ import {
   sendChatMessage,
 } from '../services/workspaceClient';
 import {
+  CropProduct,
   FarmNote,
   LanguageCode,
   LocationOption,
@@ -35,7 +37,11 @@ import {
 interface InsightsViewProps {
   t: TranslationPack;
   language: LanguageCode;
+  farmerName: string;
   location: LocationOption;
+  preferredMandi?: string;
+  products: CropProduct[];
+  favoriteCropIds: string[];
   weather: WeatherSnapshot | null;
   farmNotes: FarmNote[];
   workspaceToken: string | null;
@@ -53,10 +59,19 @@ interface InsightsViewProps {
   }) => void;
 }
 
+function getErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 export function InsightsView({
   t,
   language,
+  farmerName,
   location,
+  preferredMandi,
+  products,
+  favoriteCropIds,
   weather,
   farmNotes,
   workspaceToken,
@@ -69,12 +84,36 @@ export function InsightsView({
   audioLoadingKey,
   onListen,
 }: InsightsViewProps) {
-  const allProducts = useMemo(() => marketProvider.getAllProducts(), []);
-  const calculatedInsights = useMemo(() => marketProvider.generateCalculatedInsights(), []);
+  const calculatedInsights = useMemo(
+    () => calculateInsightsForProducts(products),
+    [products],
+  );
+
+  // Build dynamic report draft from farmer's tracked crops (or top staples) + real weather
+  const buildDynamicDraft = useCallback(() => {
+    const tracked = favoriteCropIds
+      .map((id) => products.find((p) => p.id === id))
+      .filter((p): p is CropProduct => Boolean(p));
+    const sample = (tracked.length > 0 ? tracked : products).slice(0, 4);
+    const priceLines = sample
+      .map((crop) => {
+        const changeSuffix = crop.hasComparableHistory
+          ? ` (${crop.priceChangePercent >= 0 ? '+' : ''}${crop.priceChangePercent}%)`
+          : '';
+        return `${crop.name} ₹${crop.modalPrice}/kg${changeSuffix}`;
+      })
+      .join(', ');
+    const weatherPart = weather
+      ? ` | Weather: ${weather.currentTemperature}°C, ${weather.condition}, ${weather.rainProbability}% rain`
+      : '';
+    return `KRISHI-MITHRA Update (${location.district}, ${location.state}) by ${farmerName}: ${priceLines}.${weatherPart}`;
+  }, [favoriteCropIds, products, weather, location.district, location.state, farmerName]);
 
   // Advisor state
   const [question, setQuestion] = useState('');
-  const [contextCropId, setContextCropId] = useState('tomato');
+  const [contextCropId, setContextCropId] = useState<string>(
+    () => favoriteCropIds[0] || products[0]?.id || 'tomato',
+  );
   const [advisorAnswer, setAdvisorAnswer] = useState<string | null>(null);
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const [advisorError, setAdvisorError] = useState<string | null>(null);
@@ -83,7 +122,7 @@ export function InsightsView({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
-  const [noteCropId, setNoteCropId] = useState('tomato');
+  const [noteCropId, setNoteCropId] = useState<string>(favoriteCropIds[0] || '');
 
   // Workspace FPO Contacts & Google Chat state
   const [contacts, setContacts] = useState<FpoContact[]>([]);
@@ -91,34 +130,41 @@ export function InsightsView({
   const [selectedSpaceName, setSelectedSpaceName] = useState('');
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
-  const [shareDraft, setShareDraft] = useState(() => {
-    return `Krishi Mitra Daily Report (${location.name}): Tomato ₹22/kg (+8.5%), Onion ₹45/kg (+5.2%), Potato ₹24/kg (-3.4%), Banana ₹35/kg (+3.5%).`;
-  });
+  const [shareDraft, setShareDraft] = useState<string>(() => buildDynamicDraft());
   const [confirmChatOpen, setConfirmChatOpen] = useState(false);
   const [sendingChat, setSendingChat] = useState(false);
 
   const selectedContextCrop = useMemo(
-    () => allProducts.find((c) => c.id === contextCropId) || allProducts[0],
-    [allProducts, contextCropId],
+    () => products.find((c) => c.id === contextCropId) || products[0],
+    [products, contextCropId],
   );
+
+  const primaryMandiName =
+    preferredMandi || selectedContextCrop?.market || location.mandis[0] || `${location.district} APMC`;
 
   const handleAskAdvisor = async (customPrompt?: string) => {
     const q = (customPrompt ?? question).trim();
-    if (!q) return;
+    if (!q || !selectedContextCrop) return;
     if (customPrompt) setQuestion(customPrompt);
     setAdvisorLoading(true);
     setAdvisorError(null);
     try {
       const res = await askKrishiAdvisor({
         question: q,
+        farmerName,
         cropContext: {
           crop: selectedContextCrop.name,
           variety: selectedContextCrop.variety,
           modalPriceInrPerKg: selectedContextCrop.modalPrice,
+          modalPriceInrPerQuintal:
+            selectedContextCrop.modalPriceQuintal ?? selectedContextCrop.modalPrice * 100,
           minPrice: selectedContextCrop.minimumPrice,
           maxPrice: selectedContextCrop.maximumPrice,
-          weeklyTrendPercent: selectedContextCrop.priceChangePercent,
+          weeklyTrendPercent: selectedContextCrop.hasComparableHistory
+            ? selectedContextCrop.priceChangePercent
+            : null,
           market: selectedContextCrop.market,
+          dataSource: selectedContextCrop.dataSource || 'catalog_reference',
           storage: selectedContextCrop.storage,
           shelfLife: selectedContextCrop.shelfLife,
         },
@@ -131,12 +177,12 @@ export function InsightsView({
               windKmh: weather.windSpeed,
             }
           : undefined,
-        locationName: `${location.name}, ${location.state}`,
+        locationName: `${location.district}, ${location.state}`,
         language,
       });
       setAdvisorAnswer(res.answer);
-    } catch (err: any) {
-      setAdvisorError(err?.message || 'Unable to contact Krishi Mitra Advisor.');
+    } catch (err: unknown) {
+      setAdvisorError(getErrorMessage(err, 'Unable to contact KRISHI-MITHRA Advisor.'));
     } finally {
       setAdvisorLoading(false);
     }
@@ -179,8 +225,8 @@ export function InsightsView({
     try {
       const loadedContacts = await fetchGoogleContacts(workspaceToken);
       setContacts(loadedContacts);
-    } catch (err: any) {
-      notices.push(err?.message || 'Could not load Google Contacts.');
+    } catch (err: unknown) {
+      notices.push(getErrorMessage(err, 'Could not load Google Contacts.'));
     }
 
     try {
@@ -191,8 +237,8 @@ export function InsightsView({
       } else if (loadedSpaces.length === 0) {
         notices.push('No Google Chat spaces found for this account.');
       }
-    } catch (err: any) {
-      notices.push(err?.message || 'Could not load Google Chat spaces.');
+    } catch (err: unknown) {
+      notices.push(getErrorMessage(err, 'Could not load Google Chat spaces.'));
     }
 
     if (notices.length > 0) {
@@ -208,8 +254,8 @@ export function InsightsView({
       await sendChatMessage(workspaceToken, selectedSpaceName, shareDraft.trim());
       setConfirmChatOpen(false);
       onNotify('Daily market summary shared to Google Chat space.');
-    } catch (err: any) {
-      setWorkspaceNotice(err?.message || 'Unable to send Google Chat message.');
+    } catch (err: unknown) {
+      setWorkspaceNotice(getErrorMessage(err, 'Unable to send Google Chat message.'));
       setConfirmChatOpen(false);
     } finally {
       setSendingChat(false);
@@ -225,7 +271,9 @@ export function InsightsView({
       {/* Header */}
       <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6">
         <h1 className="text-2xl font-bold text-[#202820]">{t.insightsTitle}</h1>
-        <p className="mt-1 text-sm text-[#6B756A]">{t.insightsSubtitle}</p>
+        <p className="mt-1 text-sm text-[#6B756A]">
+          {t.insightsSubtitle} · Tailored for {farmerName} ({location.district}, {location.state})
+        </p>
       </section>
 
       {/* Calculated Data Insights */}
@@ -240,7 +288,7 @@ export function InsightsView({
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#245C3A]">
                 <Lightbulb className="w-4 h-4" />
-                <span>Market Data Insight</span>
+                <span>{ins.isReference ? 'Catalog Reference Insight' : 'Live Market Insight'}</span>
               </div>
               <span className="font-mono text-xs font-bold text-[#245C3A] tabular-nums">
                 {ins.metric}
@@ -252,7 +300,7 @@ export function InsightsView({
         ))}
       </section>
 
-      {/* Deep-Thinking Krishi Mitra AI Advisor */}
+      {/* Deep-Thinking KRISHI-MITHRA AI Advisor */}
       <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -262,18 +310,18 @@ export function InsightsView({
             <div>
               <h2 className="text-lg font-bold text-[#202820]">{t.askAdvisorTitle}</h2>
               <p className="text-xs text-[#6B756A]">
-                Practical crop, harvest, storage & mandi comparison guidance in your language
+                Practical crop, harvest, storage &amp; mandi guidance for {location.district}
               </p>
             </div>
           </div>
 
           <select
             aria-label="Context crop for advisor"
-            value={contextCropId}
+            value={selectedContextCrop?.id || ''}
             onChange={(e) => setContextCropId(e.target.value)}
             className="px-3 py-2 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] text-sm font-medium text-[#202820]"
           >
-            {allProducts.map((c) => (
+            {products.map((c) => (
               <option key={c.id} value={c.id}>
                 Context: {t.cropNames[c.id] || c.name} (₹{c.modalPrice}/kg)
               </option>
@@ -281,22 +329,24 @@ export function InsightsView({
           </select>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {[
-            `Should I harvest and sell ${selectedContextCrop.name} now or grade for Bengaluru APMC?`,
-            `How do I reduce spoilage for ${selectedContextCrop.name} during rainy days?`,
-            `Compare Bengaluru APMC vs Hoskote & Doddaballapur for ${selectedContextCrop.name}.`,
-          ].map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => void handleAskAdvisor(preset)}
-              className="px-3 py-1.5 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] text-xs font-medium text-[#202820] hover:bg-[#EAF3E8] cursor-pointer text-left"
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
+        {selectedContextCrop && (
+          <div className="flex flex-wrap gap-2">
+            {[
+              `Should I harvest and sell ${selectedContextCrop.name} now or grade for ${primaryMandiName}?`,
+              `How do I reduce post-harvest spoilage for ${selectedContextCrop.name} in ${location.district} weather?`,
+              `What storage and transport steps protect ${selectedContextCrop.name} quality for ${primaryMandiName}?`,
+            ].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => void handleAskAdvisor(preset)}
+                className="px-3 py-1.5 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] text-xs font-medium text-[#202820] hover:bg-[#EAF3E8] cursor-pointer text-left"
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form
           onSubmit={(e) => {
@@ -330,7 +380,7 @@ export function InsightsView({
           <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-[#245C3A]">
-                Advisor Guidance
+                Advisor Guidance for {farmerName}
               </span>
               <button
                 type="button"
@@ -373,7 +423,7 @@ export function InsightsView({
             <div>
               <h2 className="text-lg font-bold text-[#202820]">{t.farmNotesTitle}</h2>
               <p className="text-xs text-[#6B756A]">
-                Saved locally & synced to your account when signed in
+                Synced privately to your Google account ({farmNotes.length} notes)
               </p>
             </div>
             <a
@@ -387,7 +437,10 @@ export function InsightsView({
             </a>
           </div>
 
-          <form onSubmit={handleSaveNoteSubmit} className="space-y-2.5 bg-[#FAF9F4] p-3.5 rounded-xl border border-[#E4E9E0]">
+          <form
+            onSubmit={handleSaveNoteSubmit}
+            className="space-y-2.5 bg-[#FAF9F4] p-3.5 rounded-xl border border-[#E4E9E0]"
+          >
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <input
                 type="text"
@@ -395,7 +448,7 @@ export function InsightsView({
                 maxLength={120}
                 value={noteTitle}
                 onChange={(e) => setNoteTitle(e.target.value)}
-                placeholder="Note title (e.g. Tomato lot #3)"
+                placeholder="Note title (e.g. Harvest lot #3)"
                 className="sm:col-span-2 px-3 py-2 rounded-lg border border-[#E4E9E0] bg-white text-sm text-[#202820]"
               />
               <select
@@ -405,7 +458,7 @@ export function InsightsView({
                 className="px-3 py-2 rounded-lg border border-[#E4E9E0] bg-white text-sm text-[#202820]"
               >
                 <option value="">General Note</option>
-                {allProducts.map((c) => (
+                {products.map((c) => (
                   <option key={c.id} value={c.id}>
                     {t.cropNames[c.id] || c.name}
                   </option>
@@ -445,56 +498,62 @@ export function InsightsView({
             </div>
           </form>
 
-          <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-            {farmNotes.map((note) => {
-              const cropLabel = note.cropId ? t.cropNames[note.cropId] || note.cropId : 'General';
-              return (
-                <div
-                  key={note.id}
-                  className="rounded-xl border border-[#E4E9E0] bg-white p-3.5 space-y-1.5"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold text-sm text-[#202820]">{note.title}</p>
-                      <p className="text-[11px] text-[#245C3A] font-medium">{cropLabel}</p>
+          {farmNotes.length === 0 ? (
+            <p className="text-xs text-[#6B756A] text-center py-4">
+              No farm notes yet. Record buyer quotes, harvest counts, or spray logs above.
+            </p>
+          ) : (
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              {farmNotes.map((note) => {
+                const cropLabel = note.cropId ? t.cropNames[note.cropId] || note.cropId : 'General';
+                return (
+                  <div
+                    key={note.id}
+                    className="rounded-xl border border-[#E4E9E0] bg-white p-3.5 space-y-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-sm text-[#202820]">{note.title}</p>
+                        <p className="text-[11px] text-[#245C3A] font-medium">{cropLabel}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyForKeep(note)}
+                          title="Copy for Google Keep"
+                          className="p-1.5 rounded-lg text-[#6B756A] hover:text-[#245C3A] cursor-pointer"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingNoteId(note.id);
+                            setNoteTitle(note.title);
+                            setNoteContent(note.content);
+                            setNoteCropId(note.cropId);
+                          }}
+                          title="Edit note"
+                          className="p-1.5 rounded-lg text-[#6B756A] hover:text-[#202820] cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteNote(note.id)}
+                          title="Delete note"
+                          className="p-1.5 rounded-lg text-[#6B756A] hover:text-red-700 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyForKeep(note)}
-                        title="Copy for Google Keep"
-                        className="p-1.5 rounded-lg text-[#6B756A] hover:text-[#245C3A] cursor-pointer"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingNoteId(note.id);
-                          setNoteTitle(note.title);
-                          setNoteContent(note.content);
-                          setNoteCropId(note.cropId);
-                        }}
-                        title="Edit note"
-                        className="p-1.5 rounded-lg text-[#6B756A] hover:text-[#202820] cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteNote(note.id)}
-                        title="Delete note"
-                        className="p-1.5 rounded-lg text-[#6B756A] hover:text-red-700 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    <p className="text-xs text-[#6B756A] leading-relaxed">{note.content}</p>
                   </div>
-                  <p className="text-xs text-[#6B756A] leading-relaxed">{note.content}</p>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* FPO Sharing & Google Contacts / Google Chat */}
@@ -535,7 +594,10 @@ export function InsightsView({
               </p>
               <div className="max-h-32 overflow-y-auto divide-y divide-[#E4E9E0] text-xs">
                 {contacts.slice(0, 8).map((c) => (
-                  <div key={c.resourceName} className="py-1.5 flex items-center justify-between gap-2">
+                  <div
+                    key={c.resourceName}
+                    className="py-1.5 flex items-center justify-between gap-2"
+                  >
                     <span className="font-semibold text-[#202820] truncate">{c.name}</span>
                     <span className="text-[#6B756A] truncate">{c.phone || c.email}</span>
                   </div>
@@ -545,12 +607,22 @@ export function InsightsView({
           )}
 
           <div className="space-y-2.5">
-            <label
-              htmlFor="fpo-share-draft"
-              className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A]"
-            >
-              Daily Mandi Report Draft
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="fpo-share-draft"
+                className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A]"
+              >
+                Daily Mandi Report Draft
+              </label>
+              <button
+                type="button"
+                onClick={() => setShareDraft(buildDynamicDraft())}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-[#245C3A] hover:underline cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>Sync with Current Data</span>
+              </button>
+            </div>
             <textarea
               id="fpo-share-draft"
               rows={3}

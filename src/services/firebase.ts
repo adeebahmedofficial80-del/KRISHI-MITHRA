@@ -20,7 +20,14 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import {FarmNote, LanguageCode, PriceAlert, WeatherAlertPrefs} from '../types/krishi';
+import {CROP_CATALOG_META} from '../data/cropCatalogMeta';
+import {
+  FarmerProfile,
+  FarmNote,
+  LanguageCode,
+  PriceAlert,
+  WeatherAlertPrefs,
+} from '../types/krishi';
 
 const app = initializeApp(firebaseConfig);
 const configuredDbId = (firebaseConfig as {firestoreDatabaseId?: string}).firestoreDatabaseId;
@@ -136,18 +143,19 @@ export async function signOutUser(): Promise<void> {
   await firebaseSignOut(auth);
 }
 
-export interface CloudPreferencesPayload {
-  selectedLocationId: string;
-  selectedLanguage: LanguageCode;
-  favoriteCropIds: string[];
-  alertPrefs: WeatherAlertPrefs;
-}
-
 export interface CloudUserBundle {
-  preferences: CloudPreferencesPayload | null;
+  profile: FarmerProfile | null;
+  isLegacyDoc: boolean;
   alerts: PriceAlert[];
   notes: FarmNote[];
 }
+
+const VEG_IDS = new Set(
+  CROP_CATALOG_META.filter((c) => c.category === 'vegetable').map((c) => c.id),
+);
+const FRUIT_IDS = new Set(
+  CROP_CATALOG_META.filter((c) => c.category === 'fruit').map((c) => c.id),
+);
 
 function toIsoString(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -167,21 +175,57 @@ function sanitizeSlug(raw: string): string {
   return raw.toLowerCase().replace(/[^a-z0-9_\-]/g, '-').slice(0, 64) || 'bengaluru-rural';
 }
 
+function sanitizeText(raw: string, maxLen: number): string {
+  return raw.trim().replace(/\s+/g, ' ').slice(0, maxLen);
+}
+
+export function splitSavedCropIds(favoriteCropIds: string[]): {
+  favoriteCropIds: string[];
+  savedVegetableIds: string[];
+  savedFruitIds: string[];
+} {
+  const deduped = Array.from(
+    new Set(favoriteCropIds.map((c) => sanitizeSlug(c)).filter(Boolean)),
+  ).slice(0, 80);
+  const savedVegetableIds = deduped.filter((id) => VEG_IDS.has(id)).slice(0, 50);
+  const savedFruitIds = deduped.filter((id) => FRUIT_IDS.has(id)).slice(0, 50);
+  return {favoriteCropIds: deduped, savedVegetableIds, savedFruitIds};
+}
+
 export async function loadUserCloudState(uid: string): Promise<CloudUserBundle> {
   const userPath = `users/${uid}`;
-  let preferences: CloudPreferencesPayload | null = null;
+  let profile: FarmerProfile | null = null;
+  let isLegacyDoc = false;
+
   try {
     const snap = await getDoc(doc(db, 'users', uid));
     if (snap.exists()) {
       const data = snap.data();
-      preferences = {
+      isLegacyDoc = !('farmerName' in data) || !('onboardingCompleted' in data);
+      const favs = Array.isArray(data.favoriteCropIds)
+        ? data.favoriteCropIds.filter((x): x is string => typeof x === 'string').slice(0, 80)
+        : [];
+      const split = splitSavedCropIds(favs);
+
+      profile = {
+        uid,
+        farmerName: typeof data.farmerName === 'string' ? data.farmerName.trim() : '',
+        email: typeof data.email === 'string' ? data.email : '',
+        state: typeof data.state === 'string' ? data.state : '',
+        district: typeof data.district === 'string' ? data.district : '',
+        taluk: typeof data.taluk === 'string' ? data.taluk : '',
+        preferredMandi: typeof data.preferredMandi === 'string' ? data.preferredMandi : '',
         selectedLocationId: String(data.selectedLocationId || 'bengaluru-rural'),
         selectedLanguage: (['en', 'kn', 'hi', 'te', 'ta'].includes(data.selectedLanguage)
           ? data.selectedLanguage
           : 'en') as LanguageCode,
-        favoriteCropIds: Array.isArray(data.favoriteCropIds)
-          ? data.favoriteCropIds.filter((x): x is string => typeof x === 'string').slice(0, 25)
-          : [],
+        favoriteCropIds: split.favoriteCropIds,
+        savedVegetableIds: Array.isArray(data.savedVegetableIds)
+          ? data.savedVegetableIds.filter((x): x is string => typeof x === 'string').slice(0, 50)
+          : split.savedVegetableIds,
+        savedFruitIds: Array.isArray(data.savedFruitIds)
+          ? data.savedFruitIds.filter((x): x is string => typeof x === 'string').slice(0, 50)
+          : split.savedFruitIds,
         alertPrefs: {
           rain: Boolean(data.alertPrefs?.rain ?? true),
           heavyRain: Boolean(data.alertPrefs?.heavyRain ?? true),
@@ -189,6 +233,11 @@ export async function loadUserCloudState(uid: string): Promise<CloudUserBundle> 
           wind: Boolean(data.alertPrefs?.wind ?? true),
           dailyForecast: Boolean(data.alertPrefs?.dailyForecast ?? false),
         },
+        onboardingCompleted: Boolean(data.onboardingCompleted ?? false),
+        hasSeenGrandOpening: Boolean(data.hasSeenGrandOpening ?? false),
+        createdAt: data.createdAt ? toIsoString(data.createdAt) : undefined,
+        lastLoginAt: data.lastLoginAt ? toIsoString(data.lastLoginAt) : undefined,
+        updatedAt: data.updatedAt ? toIsoString(data.updatedAt) : undefined,
       };
     }
   } catch (error) {
@@ -235,42 +284,70 @@ export async function loadUserCloudState(uid: string): Promise<CloudUserBundle> 
     handleFirestoreError(error, OperationType.LIST, notesPath);
   }
 
-  return {preferences, alerts, notes};
+  return {profile, isLegacyDoc, alerts, notes};
 }
 
-export async function saveUserPreferences(
+export async function saveFarmerProfile(
   uid: string,
-  prefs: CloudPreferencesPayload,
+  profile: Omit<FarmerProfile, 'uid' | 'createdAt' | 'lastLoginAt' | 'updatedAt'>,
+  options: {updateLastLogin?: boolean} = {},
 ): Promise<void> {
   const path = `users/${uid}`;
   const ref = doc(db, 'users', uid);
-  const payload = {
-    uid,
-    selectedLocationId: sanitizeSlug(prefs.selectedLocationId),
-    selectedLanguage: prefs.selectedLanguage,
-    favoriteCropIds: prefs.favoriteCropIds.map((c) => sanitizeSlug(c)).slice(0, 25),
+  const split = splitSavedCropIds(profile.favoriteCropIds);
+
+  const safeFarmerName = sanitizeText(profile.farmerName, 80) || 'Farmer';
+  const safeEmail = sanitizeText(
+    profile.email || auth.currentUser?.email || '',
+    160,
+  );
+
+  const baseFields = {
+    farmerName: safeFarmerName,
+    email: safeEmail,
+    state: sanitizeText(profile.state, 80),
+    district: sanitizeText(profile.district, 80),
+    taluk: sanitizeText(profile.taluk, 80),
+    preferredMandi: sanitizeText(profile.preferredMandi, 100),
+    selectedLocationId: sanitizeSlug(profile.selectedLocationId),
+    selectedLanguage: profile.selectedLanguage,
+    favoriteCropIds: split.favoriteCropIds,
+    savedVegetableIds: split.savedVegetableIds,
+    savedFruitIds: split.savedFruitIds,
     alertPrefs: {
-      rain: Boolean(prefs.alertPrefs.rain),
-      heavyRain: Boolean(prefs.alertPrefs.heavyRain),
-      temperature: Boolean(prefs.alertPrefs.temperature),
-      wind: Boolean(prefs.alertPrefs.wind),
-      dailyForecast: Boolean(prefs.alertPrefs.dailyForecast),
+      rain: Boolean(profile.alertPrefs.rain),
+      heavyRain: Boolean(profile.alertPrefs.heavyRain),
+      temperature: Boolean(profile.alertPrefs.temperature),
+      wind: Boolean(profile.alertPrefs.wind),
+      dailyForecast: Boolean(profile.alertPrefs.dailyForecast),
     },
-    updatedAt: serverTimestamp(),
+    onboardingCompleted: Boolean(profile.onboardingCompleted),
+    hasSeenGrandOpening: Boolean(profile.hasSeenGrandOpening),
   };
 
   try {
     const existing = await getDoc(ref);
     if (existing.exists()) {
-      await updateDoc(ref, {
-        selectedLocationId: payload.selectedLocationId,
-        selectedLanguage: payload.selectedLanguage,
-        favoriteCropIds: payload.favoriteCropIds,
-        alertPrefs: payload.alertPrefs,
+      const existingData = existing.data();
+      const updatePayload: Record<string, unknown> = {
+        ...baseFields,
+        updatedAt: serverTimestamp(),
+      };
+      if (!existingData.createdAt) {
+        updatePayload.createdAt = serverTimestamp();
+      }
+      if (options.updateLastLogin || !existingData.lastLoginAt) {
+        updatePayload.lastLoginAt = serverTimestamp();
+      }
+      await updateDoc(ref, updatePayload);
+    } else {
+      await setDoc(ref, {
+        uid,
+        ...baseFields,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    } else {
-      await setDoc(ref, payload);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);

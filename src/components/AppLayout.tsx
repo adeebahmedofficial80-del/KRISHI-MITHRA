@@ -1,5 +1,6 @@
 import {User} from 'firebase/auth';
 import {
+  Check,
   CloudSun,
   Home,
   Lightbulb,
@@ -11,21 +12,34 @@ import {
   Sprout,
   Store,
   TrendingUp,
+  User as UserIcon,
   X,
 } from 'lucide-react';
-import React, {useState} from 'react';
-import {KARNATAKA_LOCATIONS} from '../data/locations';
+import React, {useMemo, useState} from 'react';
+import {ALL_INDIA_LOCATIONS, getLocationsByState, INDIAN_STATES} from '../data/locations';
 import {LANGUAGE_OPTIONS, TranslationPack} from '../data/translations';
-import {LanguageCode, LocationOption, NavTab, WeatherAlertPrefs} from '../types/krishi';
+import {LocationProfilePatch} from '../hooks/useKrishiStore';
+import {
+  FarmerProfile,
+  LanguageCode,
+  LocationOption,
+  NavTab,
+  WeatherAlertPrefs,
+} from '../types/krishi';
 import {OfflineIndicator} from './OfflineIndicator';
 import {PWAInstallButton} from './PWAInstallButton';
+
+const OFFICIAL_LOGO_URL = '/assets/aistudio/1b0ca66f-3975-4c99-adee-4dfad66df9ff_06020d3d.png';
 
 interface AppLayoutProps {
   t: TranslationPack;
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
+  farmerName: string;
+  farmerProfile: FarmerProfile | null;
   selectedLocation: LocationOption;
-  onSelectLocation: (locId: string) => void;
+  onUpdateFarmerName: (name: string) => Promise<void>;
+  onUpdateLocationProfile: (patch: LocationProfilePatch) => Promise<void>;
   selectedLanguage: LanguageCode;
   onSelectLanguage: (lang: LanguageCode) => void;
   user: User | null;
@@ -44,8 +58,11 @@ export function AppLayout({
   t,
   activeTab,
   onSelectTab,
+  farmerName,
+  farmerProfile,
   selectedLocation,
-  onSelectLocation,
+  onUpdateFarmerName,
+  onUpdateLocationProfile,
   selectedLanguage,
   onSelectLanguage,
   user,
@@ -62,6 +79,36 @@ export function AppLayout({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
+
+  // Inline editable profile fields in drawer
+  const [draftName, setDraftName] = useState(farmerName);
+  const [draftState, setDraftState] = useState(farmerProfile?.state || selectedLocation.state);
+  const [draftLocationId, setDraftLocationId] = useState(selectedLocation.id);
+  const [draftTaluk, setDraftTaluk] = useState(
+    farmerProfile?.taluk || selectedLocation.taluks[0] || '',
+  );
+  const [draftMandi, setDraftMandi] = useState(
+    farmerProfile?.preferredMandi || selectedLocation.mandis[0] || '',
+  );
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const openDrawer = () => {
+    setDraftName(farmerName);
+    setDraftState(farmerProfile?.state || selectedLocation.state);
+    setDraftLocationId(selectedLocation.id);
+    setDraftTaluk(farmerProfile?.taluk || selectedLocation.taluks[0] || '');
+    setDraftMandi(farmerProfile?.preferredMandi || selectedLocation.mandis[0] || '');
+    setDrawerOpen(true);
+  };
+
+  const stateDistricts = useMemo(() => getLocationsByState(draftState), [draftState]);
+  const activeDraftLoc = useMemo(
+    () =>
+      stateDistricts.find((l) => l.id === draftLocationId) ||
+      stateDistricts[0] ||
+      selectedLocation,
+    [stateDistricts, draftLocationId, selectedLocation],
+  );
 
   const navItems: {id: NavTab; label: string; icon: React.ComponentType<{className?: string}>}[] = [
     {id: 'home', label: t.navHome, icon: Home},
@@ -80,40 +127,56 @@ export function AppLayout({
     }
   };
 
+  const handleSaveProfileEdits = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    try {
+      if (draftName.trim() && draftName.trim() !== farmerName) {
+        await onUpdateFarmerName(draftName.trim());
+      }
+      await onUpdateLocationProfile({
+        state: activeDraftLoc.state,
+        district: activeDraftLoc.district,
+        taluk: draftTaluk || activeDraftLoc.taluks[0] || '',
+        preferredMandi: draftMandi || activeDraftLoc.mandis[0] || '',
+        selectedLocationId: activeDraftLoc.id,
+      });
+      setDrawerOpen(false);
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const displayLocality = farmerProfile?.taluk
+    ? `${farmerProfile.taluk}, ${selectedLocation.district}`
+    : `${selectedLocation.district}, ${selectedLocation.state}`;
+
   return (
     <div className="min-h-screen bg-[#F7F8F4] text-[#202820] flex flex-col">
       <OfflineIndicator />
 
-      {/* Top Navigation Header — strict 3-zone desktop, compact mobile */}
+      {/* Top Navigation Header — 3-zone desktop, compact mobile */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[#E4E9E0]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 lg:h-16 flex items-center justify-between gap-3">
-          {/* Zone 1: Brand */}
+          {/* Zone 1: Official KRISHI-MITHRA Brand */}
           <button
             type="button"
             onClick={() => onSelectTab('home')}
             className="flex items-center gap-2.5 text-left cursor-pointer shrink-0 group"
           >
-            <div className="w-9 h-9 rounded-xl bg-[#245C3A] flex items-center justify-center shadow-xs group-hover:bg-[#1d4b2f] transition-colors">
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" aria-hidden="true">
-                <circle cx="17" cy="7" r="3" fill="#FBBF24" />
-                <path
-                  d="M5 18C5 12 9.5 7.5 16 7.5C16 14 11.5 18.5 5 18Z"
-                  fill="#EAF3E8"
-                />
-                <path
-                  d="M6 17.5C8.5 15 11.2 12.8 14.5 10.5"
-                  stroke="#245C3A"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                />
-              </svg>
+            <div className="w-9 h-9 rounded-xl bg-[#050705] border border-[#245C3A]/40 overflow-hidden flex items-center justify-center shrink-0">
+              <img
+                src={OFFICIAL_LOGO_URL}
+                alt="KRISHI-MITHRA"
+                className="w-full h-full object-contain p-0.5"
+              />
             </div>
             <div>
               <span className="font-display font-bold text-base lg:text-lg tracking-tight text-[#202820] block leading-none">
-                {t.brandName}
+                KRISHI-MITHRA
               </span>
-              <span className="hidden sm:block text-[11px] text-[#6B756A] mt-0.5 leading-none">
-                {selectedLocation.name}, {selectedLocation.state}
+              <span className="hidden sm:block text-[11px] text-[#6B756A] mt-0.5 leading-none truncate max-w-[190px]">
+                {displayLocality}
               </span>
             </div>
           </button>
@@ -141,7 +204,7 @@ export function AppLayout({
             })}
           </nav>
 
-          {/* Zone 3: Quick Actions + Location/Language/Account Drawer */}
+          {/* Zone 3: Quick Actions + Profile/Location/Language Drawer */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -157,13 +220,13 @@ export function AppLayout({
 
             <button
               type="button"
-              onClick={() => setDrawerOpen(true)}
+              onClick={openDrawer}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white hover:bg-[#FAF9F4] text-xs sm:text-sm font-medium text-[#202820] cursor-pointer min-h-[40px]"
             >
               {user?.photoURL ? (
                 <img
                   src={user.photoURL}
-                  alt={user.displayName || 'Farmer profile'}
+                  alt={farmerName || 'Farmer profile'}
                   referrerPolicy="no-referrer"
                   className="w-5 h-5 rounded-full object-cover"
                 />
@@ -171,7 +234,7 @@ export function AppLayout({
                 <MapPin className="w-4 h-4 text-[#245C3A]" />
               )}
               <span className="hidden md:inline max-w-[130px] truncate">
-                {user ? user.displayName?.split(' ')[0] || t.settingsAccount : selectedLocation.name}
+                {farmerName || selectedLocation.name}
               </span>
               <span className="text-[11px] font-mono uppercase text-[#6B756A] border-l border-[#E4E9E0] pl-2">
                 {selectedLanguage}
@@ -232,15 +295,18 @@ export function AppLayout({
         <div className="max-w-7xl mx-auto px-6 py-5 flex flex-wrap items-center justify-between gap-4 text-xs text-[#6B756A]">
           <div className="flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#245C3A]" />
-            <span className="font-semibold text-[#202820]">{t.brandName}</span>
+            <span className="font-semibold text-[#202820]">KRISHI-MITHRA</span>
             <span>·</span>
             <span>{t.tagline}</span>
           </div>
-          <p>{t.demoDisclaimer}</p>
+          <p>
+            Market prices depend on grade, variety, and daily APMC auction arrivals. Always verify
+            mandi receipts and transport costs before dispatch.
+          </p>
         </div>
       </footer>
 
-      {/* Mobile Bottom Navigation Bar (5 tabs, >=44px touch targets) */}
+      {/* Mobile Bottom Navigation Bar */}
       <nav
         className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E4E9E0] pb-[env(safe-area-inset-bottom)]"
         aria-label="Mobile navigation"
@@ -274,7 +340,7 @@ export function AppLayout({
         </div>
       </nav>
 
-      {/* Slide-over Location, Language, Account & Preferences Drawer */}
+      {/* Slide-over Farmer Profile, Location, Language & Alert Preferences Drawer */}
       {drawerOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex justify-end"
@@ -298,115 +364,192 @@ export function AppLayout({
               </button>
             </div>
 
-            {/* Farmer Account & Cloud Sync */}
-            <section className="rounded-2xl border border-[#E4E9E0] bg-[#FAF9F4] p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-[#6B756A]">
-                Cloud Sync & Google Account
-              </p>
-              {user ? (
-                <div className="mt-3 space-y-3">
-                  <div className="flex items-center gap-3">
-                    {user.photoURL ? (
-                      <img
-                        src={user.photoURL}
-                        alt={user.displayName || 'Farmer'}
-                        referrerPolicy="no-referrer"
-                        className="w-10 h-10 rounded-full object-cover border border-[#E4E9E0]"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-[#245C3A] text-white flex items-center justify-center font-bold">
-                        {(user.displayName || user.email || 'F')[0].toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-[#202820] truncate">
-                        {user.displayName || 'Farmer Account'}
-                      </p>
-                      <p className="text-xs text-[#6B756A] truncate">{user.email}</p>
+            {/* Signed-in Farmer Account Summary */}
+            {user && (
+              <section className="rounded-2xl border border-[#E4E9E0] bg-[#FAF9F4] p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  {user.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt={farmerName || 'Farmer'}
+                      referrerPolicy="no-referrer"
+                      className="w-10 h-10 rounded-full object-cover border border-[#E4E9E0]"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-[#245C3A] text-white flex items-center justify-center font-bold">
+                      {(farmerName || user.email || 'F')[0].toUpperCase()}
                     </div>
-                  </div>
-                  <p className="text-xs text-[#245C3A] font-medium">
-                    {syncing
-                      ? 'Syncing crops, alerts, and notes...'
-                      : 'Favorites, alerts, and farm notes are synced across devices.'}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={authBusy}
-                      onClick={() => void handleAuthClick(true)}
-                      className="px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-xs font-medium text-[#202820] hover:bg-[#EAF3E8] cursor-pointer"
-                    >
-                      Grant Contacts / Chat Access
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void onSignOut()}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-xs font-medium text-[#6B756A] hover:text-red-700 cursor-pointer"
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      Sign out
-                    </button>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-[#202820] truncate">
+                      {farmerName || user.displayName}
+                    </p>
+                    <p className="text-xs text-[#6B756A] truncate">{user.email}</p>
                   </div>
                 </div>
-              ) : (
-                <div className="mt-2.5 space-y-3">
-                  <p className="text-xs text-[#6B756A] leading-relaxed">
-                    Your crops, alerts, and farm notes save automatically on this device. Sign in
-                    with Google anytime to back up and sync across devices.
-                  </p>
-                  {/* Official Google Sign-In styling */}
+                <p className="text-xs text-[#245C3A] font-medium">
+                  {syncing
+                    ? 'Syncing profile, crops, alerts, and notes...'
+                    : 'Profile, tracked crops, alerts, and notes are synced securely.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     disabled={authBusy}
-                    onClick={() => void handleAuthClick(false)}
-                    className="w-full flex items-center justify-center gap-3 px-4 py-2.5 rounded-xl bg-white border border-[#747775]/40 text-[#1F1F1F] text-sm font-medium shadow-xs hover:bg-[#f8f9fa] transition-colors cursor-pointer"
+                    onClick={() => void handleAuthClick(true)}
+                    className="px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-xs font-medium text-[#202820] hover:bg-[#EAF3E8] cursor-pointer"
                   >
-                    <svg viewBox="0 0 24 24" className="w-4 h-4 shrink-0" aria-hidden="true">
-                      <path
-                        fill="#4285F4"
-                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
-                      />
-                    </svg>
-                    <span>{authBusy ? 'Signing in...' : 'Sign in with Google'}</span>
+                    Grant Contacts / Chat Access
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      void onSignOut();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-xs font-medium text-[#6B756A] hover:text-red-700 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    Sign out
                   </button>
                 </div>
-              )}
-            </section>
+              </section>
+            )}
 
-            {/* District Selector */}
-            <section>
-              <label
-                htmlFor="drawer-location-select"
-                className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A] mb-2"
+            {/* Edit Farmer Name & Location Profile */}
+            <form onSubmit={handleSaveProfileEdits} className="space-y-3.5">
+              <div>
+                <label
+                  htmlFor="drawer-farmer-name"
+                  className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[#6B756A] mb-1.5"
+                >
+                  <UserIcon className="w-3.5 h-3.5 text-[#245C3A]" />
+                  <span>Farmer Name</span>
+                </label>
+                <input
+                  id="drawer-farmer-name"
+                  type="text"
+                  required
+                  maxLength={80}
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl border border-[#E4E9E0] bg-white text-sm font-medium text-[#202820] focus:outline-none focus:ring-2 focus:ring-[#245C3A]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label
+                    htmlFor="drawer-state"
+                    className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A] mb-1"
+                  >
+                    State
+                  </label>
+                  <select
+                    id="drawer-state"
+                    value={draftState}
+                    onChange={(e) => {
+                      const nextSt = e.target.value;
+                      setDraftState(nextSt);
+                      const first = getLocationsByState(nextSt)[0];
+                      if (first) {
+                        setDraftLocationId(first.id);
+                        setDraftTaluk(first.taluks[0] || '');
+                        setDraftMandi(first.mandis[0] || '');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-sm text-[#202820]"
+                  >
+                    {INDIAN_STATES.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="drawer-district"
+                    className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A] mb-1"
+                  >
+                    District
+                  </label>
+                  <select
+                    id="drawer-district"
+                    value={activeDraftLoc.id}
+                    onChange={(e) => {
+                      const found = ALL_INDIA_LOCATIONS.find((l) => l.id === e.target.value);
+                      if (found) {
+                        setDraftLocationId(found.id);
+                        setDraftTaluk(found.taluks[0] || '');
+                        setDraftMandi(found.mandis[0] || '');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-sm text-[#202820]"
+                  >
+                    {stateDistricts.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.district}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label
+                    htmlFor="drawer-taluk"
+                    className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A] mb-1"
+                  >
+                    Taluk / Locality
+                  </label>
+                  <select
+                    id="drawer-taluk"
+                    value={draftTaluk}
+                    onChange={(e) => setDraftTaluk(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-sm text-[#202820]"
+                  >
+                    {activeDraftLoc.taluks.map((tk) => (
+                      <option key={tk} value={tk}>
+                        {tk}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="drawer-mandi"
+                    className="block text-xs font-semibold uppercase tracking-wider text-[#6B756A] mb-1"
+                  >
+                    Preferred Mandi
+                  </label>
+                  <select
+                    id="drawer-mandi"
+                    value={draftMandi}
+                    onChange={(e) => setDraftMandi(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E4E9E0] bg-white text-sm text-[#202820]"
+                  >
+                    {activeDraftLoc.mandis.map((md) => (
+                      <option key={md} value={md}>
+                        {md}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={savingProfile}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#245C3A] hover:bg-[#1D4B2F] disabled:opacity-60 text-white text-sm font-semibold cursor-pointer"
               >
-                District / Weather Area
-              </label>
-              <select
-                id="drawer-location-select"
-                value={selectedLocation.id}
-                onChange={(e) => onSelectLocation(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-[#E4E9E0] bg-white text-sm font-medium text-[#202820] focus:outline-none focus:ring-2 focus:ring-[#245C3A]"
-              >
-                {KARNATAKA_LOCATIONS.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}, {loc.state}
-                  </option>
-                ))}
-              </select>
-            </section>
+                <Check className="w-4 h-4" />
+                <span>{savingProfile ? 'Saving profile...' : 'Save Name & Location'}</span>
+              </button>
+            </form>
 
             {/* 5-Language Selector */}
             <section>

@@ -31,13 +31,21 @@ import {
 } from 'recharts';
 import {TranslationPack} from '../data/translations';
 import {fetchMandiGrounding, MandiGroundingResult} from '../services/aiClient';
-import {marketProvider} from '../services/marketProvider';
-import {CropProduct, LanguageCode, LocationOption, PriceAlert} from '../types/krishi';
+import {getMarketComparisonForProduct} from '../services/marketProvider';
+import {
+  CropProduct,
+  LanguageCode,
+  LocationOption,
+  PriceAlert,
+  PriceDisplayUnit,
+} from '../types/krishi';
 import {CropImage} from './CropImage';
 import {MandiMap} from './MandiMap';
 
 interface ProductDetailPanelProps {
   crop: CropProduct;
+  allProducts: CropProduct[];
+  priceUnit: PriceDisplayUnit;
   t: TranslationPack;
   language: LanguageCode;
   location: LocationOption;
@@ -60,6 +68,8 @@ interface ProductDetailPanelProps {
 
 export function ProductDetailPanel({
   crop,
+  allProducts,
+  priceUnit,
   t,
   language,
   location,
@@ -83,8 +93,8 @@ export function ProductDetailPanel({
   const marketDisplayName = t.marketNames[crop.marketId] || crop.market;
 
   const comparison = useMemo(
-    () => marketProvider.getMarketComparison(crop.id, location),
-    [crop.id, location],
+    () => getMarketComparisonForProduct(crop, location),
+    [crop, location],
   );
 
   const chartData = crop.priceHistory[range];
@@ -92,11 +102,32 @@ export function ProductDetailPanel({
   const relatedCrops = useMemo(
     () =>
       crop.relatedCropIds
-        .map((id) => marketProvider.getProductById(id))
+        .map((id) => allProducts.find((p) => p.id === id))
         .filter((item): item is CropProduct => Boolean(item))
         .slice(0, 3),
-    [crop.relatedCropIds],
+    [crop.relatedCropIds, allProducts],
   );
+
+  const formatRate = (kgVal: number, qtlVal?: number) => {
+    if (priceUnit === 'quintal') {
+      return `₹${Math.round(qtlVal ?? kgVal * 100)}/qtl`;
+    }
+    return `₹${kgVal}/kg`;
+  };
+
+  const modalDisplay =
+    priceUnit === 'quintal'
+      ? Math.round(crop.modalPriceQuintal ?? crop.modalPrice * 100)
+      : crop.modalPrice;
+  const minDisplay =
+    priceUnit === 'quintal'
+      ? Math.round(crop.minimumPriceQuintal ?? crop.minimumPrice * 100)
+      : crop.minimumPrice;
+  const maxDisplay =
+    priceUnit === 'quintal'
+      ? Math.round(crop.maximumPriceQuintal ?? crop.maximumPrice * 100)
+      : crop.maximumPrice;
+  const unitSuffix = priceUnit === 'quintal' ? 'qtl' : 'kg';
 
   const isRising = crop.priceChangePercent > 0.5;
   const isFalling = crop.priceChangePercent < -0.5;
@@ -111,22 +142,27 @@ export function ProductDetailPanel({
       const result = await fetchMandiGrounding({
         cropName: crop.name,
         marketName: crop.market,
-        locationName: `${location.name}, ${location.state}`,
+        locationName: `${location.district}, ${location.state}`,
         mode,
         lat: location.lat,
         lng: location.lng,
         language,
       });
       setGroundingResult(result);
-    } catch (err: any) {
-      setGroundingError(err?.message || 'Unable to load live mandi intelligence right now.');
+    } catch (err: unknown) {
+      setGroundingError(
+        err instanceof Error ? err.message : 'Unable to load live mandi intelligence right now.',
+      );
     } finally {
       setGroundingLoading(null);
     }
   };
 
   const handleCopyShare = async () => {
-    const shareText = `${cropName} (${crop.variety}) — ${marketDisplayName}: Modal ₹${crop.modalPrice}/kg (Range ₹${crop.minimumPrice}–₹${crop.maximumPrice}/kg, 7d change ${crop.priceChangePercent > 0 ? '+' : ''}${crop.priceChangePercent}%). Demo data ${crop.updatedAt}.`;
+    const sourceTag = crop.isDemo
+      ? 'Reference baseline'
+      : `AGMARKNET observation (${crop.updatedAt})`;
+    const shareText = `${cropName} (${crop.variety}) — ${marketDisplayName}: Modal ₹${crop.modalPrice}/kg (₹${crop.modalPriceQuintal ?? crop.modalPrice * 100}/quintal), Range ₹${crop.minimumPrice}–₹${crop.maximumPrice}/kg. ${sourceTag}.`;
     try {
       await navigator.clipboard.writeText(shareText);
       onNotify(`Copied ${cropName} market summary to clipboard.`);
@@ -186,6 +222,7 @@ export function ProductDetailPanel({
           <CropImage
             src={crop.image}
             alt={`${cropName} (${crop.variety}) fresh produce`}
+            category={crop.category}
             className="w-28 h-28 sm:w-36 sm:h-36 rounded-2xl border border-[#E4E9E0] shrink-0"
           />
 
@@ -204,12 +241,33 @@ export function ProductDetailPanel({
               {cropName}
             </h2>
 
+            {crop.regionalNames && crop.regionalNames.length > 0 && (
+              <p className="mt-1 text-xs text-[#5B675B]">
+                Also known as: {crop.regionalNames.join(' · ')}
+              </p>
+            )}
+
             <p className="mt-1.5 text-sm text-[#6B756A] leading-relaxed max-w-2xl">
               {crop.description}
             </p>
 
+            {crop.varieties && crop.varieties.length > 0 && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {crop.varieties.map((v) => (
+                  <span
+                    key={v}
+                    className="px-2.5 py-0.5 rounded-md bg-[#F4F7F1] border border-[#E2E8DC] text-[11px] font-medium text-[#3C483C]"
+                  >
+                    {v}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <p className="mt-2 text-xs text-[#6B756A] tabular-nums">
-              {crop.isDemo ? `Demo data · Updated ${crop.updatedAt}` : `Updated ${crop.updatedAt}`}
+              {crop.isDemo
+                ? 'Reference catalog baseline (live AGMARKNET sync not active for this crop yet)'
+                : `AGMARKNET observation · ${crop.updatedAt}${crop.isStale ? ' (Cached)' : ''}`}
             </p>
 
             {/* Primary Action Row */}
@@ -259,16 +317,17 @@ export function ProductDetailPanel({
                 onClick={() =>
                   onListen({
                     key: audioKey,
-                    text: `${cropName} at ${marketDisplayName}. Today's modal price is ${crop.modalPrice} rupees per kilogram, ranging from ${crop.minimumPrice} to ${crop.maximumPrice} rupees. 7-day trend is ${crop.priceChangePercent} percent. ${crop.farmerInsights[0] || ''}`,
+                    text: `${cropName} at ${marketDisplayName}. ${crop.isDemo ? 'Catalog reference' : 'Observed'} modal rate is ${crop.modalPrice} rupees per kilogram (${crop.modalPriceQuintal ?? crop.modalPrice * 100} rupees per quintal), ranging from ${crop.minimumPrice} to ${crop.maximumPrice} rupees per kilogram. ${crop.farmerInsights[0] || ''}`,
                     language,
-                    quickSummarizeTopic: `${crop.name} market price and farmer advice`,
+                    quickSummarizeTopic: `${crop.name} market rate and harvest advice`,
                     quickSummarizePayload: {
                       crop: crop.name,
                       market: crop.market,
+                      isReferenceBaseline: crop.isDemo,
                       modalPriceInrPerKg: crop.modalPrice,
-                      minPrice: crop.minimumPrice,
-                      maxPrice: crop.maximumPrice,
-                      weeklyChangePercent: crop.priceChangePercent,
+                      modalPriceInrPerQuintal: crop.modalPriceQuintal ?? crop.modalPrice * 100,
+                      minPriceKg: crop.minimumPrice,
+                      maxPriceKg: crop.maximumPrice,
                       tip: crop.farmerInsights[0],
                     },
                   })
@@ -302,7 +361,7 @@ export function ProductDetailPanel({
         </div>
       </section>
 
-      {/* SECTION B: MARKET PRICE OVERVIEW (PRIMARY FOCUS) */}
+      {/* SECTION B: MARKET PRICE OVERVIEW (Explicit Units: ₹/kg and ₹/Quintal) */}
       <section
         id="sec-price"
         className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6"
@@ -310,41 +369,54 @@ export function ProductDetailPanel({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
           <div className="lg:col-span-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-[#6B756A]">
-              {t.modalPriceToday} · {marketDisplayName}
+              {crop.isDemo ? 'Reference Modal Rate' : t.modalPriceToday} · {marketDisplayName}
             </p>
             <div className="mt-2 flex flex-wrap items-baseline gap-3">
               <span className="font-mono text-4xl sm:text-5xl font-bold text-[#202820] tabular-nums">
-                ₹{crop.modalPrice}
+                ₹{modalDisplay}
               </span>
-              <span className="text-lg font-medium text-[#6B756A]">/ {crop.unit}</span>
+              <span className="text-lg font-medium text-[#6B756A]">/ {unitSuffix}</span>
 
-              <span
-                className={`inline-flex items-center gap-1 text-sm font-semibold tabular-nums ${
-                  isRising
-                    ? 'text-[#245C3A]'
-                    : isFalling
-                      ? 'text-amber-700'
-                      : 'text-[#6B756A]'
-                }`}
-              >
-                {isRising ? (
-                  <ArrowUpRight className="w-4 h-4" />
-                ) : isFalling ? (
-                  <ArrowDownRight className="w-4 h-4" />
-                ) : (
-                  <Minus className="w-4 h-4" />
-                )}
-                <span>
-                  {crop.priceChangePercent > 0 ? '+' : ''}
-                  {crop.priceChangePercent}%
+              {crop.hasComparableHistory && !crop.isDemo ? (
+                <span
+                  className={`inline-flex items-center gap-1 text-sm font-semibold tabular-nums ${
+                    isRising
+                      ? 'text-[#245C3A]'
+                      : isFalling
+                        ? 'text-amber-700'
+                        : 'text-[#6B756A]'
+                  }`}
+                >
+                  {isRising ? (
+                    <ArrowUpRight className="w-4 h-4" />
+                  ) : isFalling ? (
+                    <ArrowDownRight className="w-4 h-4" />
+                  ) : (
+                    <Minus className="w-4 h-4" />
+                  )}
+                  <span>
+                    {crop.priceChangePercent > 0 ? '+' : ''}
+                    {crop.priceChangePercent}%
+                  </span>
+                  <span className="font-normal text-[#6B756A]">
+                    · {isRising ? t.priceRising : isFalling ? t.priceFalling : t.priceStable}
+                  </span>
                 </span>
-                <span className="font-normal text-[#6B756A]">
-                  · {isRising ? t.priceRising : isFalling ? t.priceFalling : t.priceStable}
+              ) : (
+                <span className="text-xs text-[#6B756A] bg-[#F4F7F1] px-2.5 py-1 rounded-lg border border-[#E2E8DC]">
+                  {crop.isDemo
+                    ? 'Reference baseline'
+                    : 'No comparable prior date recorded yet'}
                 </span>
-              </span>
+              )}
             </div>
-            <p className="mt-2 text-xs text-[#6B756A]">
-              Wholesale APMC Mandi · {crop.isDemo ? 'Sample data' : 'Live data'} · {crop.updatedAt}
+            <p className="mt-2 text-xs text-[#6B756A] font-mono tabular-nums">
+              Equivalent:{' '}
+              {priceUnit === 'quintal'
+                ? `₹${crop.modalPrice}/kg`
+                : `₹${Math.round(crop.modalPriceQuintal ?? crop.modalPrice * 100)}/quintal (100 kg)`}
+              {' · '}
+              {crop.updatedAt}
             </p>
           </div>
 
@@ -352,24 +424,27 @@ export function ProductDetailPanel({
             <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
               <p className="text-xs text-[#6B756A]">{t.minPrice}</p>
               <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
-                ₹{crop.minimumPrice}/{crop.unit}
+                ₹{minDisplay}/{unitSuffix}
               </p>
             </div>
             <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
               <p className="text-xs text-[#6B756A]">{t.maxPrice}</p>
               <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
-                ₹{crop.maximumPrice}/{crop.unit}
+                ₹{maxDisplay}/{unitSuffix}
               </p>
             </div>
             <div className="col-span-2 sm:col-span-1 rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/60 p-3.5">
-              <p className="text-xs text-[#245C3A] font-medium">7D Average</p>
+              <p className="text-xs text-[#245C3A] font-medium">
+                {crop.isDemo ? 'Baseline Avg' : '7D Average'}
+              </p>
               <p className="mt-1 font-mono text-xl font-bold text-[#245C3A] tabular-nums">
                 ₹
                 {Math.round(
-                  crop.priceHistory['7d'].reduce((s, p) => s + p.modal, 0) /
-                    Math.max(1, crop.priceHistory['7d'].length),
+                  (crop.priceHistory['7d'].reduce((s, p) => s + p.modal, 0) /
+                    Math.max(1, crop.priceHistory['7d'].length)) *
+                    (priceUnit === 'quintal' ? 100 : 1),
                 )}
-                /{crop.unit}
+                /{unitSuffix}
               </p>
             </div>
           </div>
@@ -382,7 +457,9 @@ export function ProductDetailPanel({
           <div>
             <h3 className="text-lg font-bold text-[#202820]">{t.priceTrend}</h3>
             <p className="text-xs text-[#6B756A]">
-              Modal, minimum, and maximum daily rates (₹/kg)
+              {crop.isDemo
+                ? 'Reference baseline series (live historical observations populate automatically as daily AGMARKNET syncs run)'
+                : 'Verified modal, minimum, and maximum daily mandi rates (₹/kg)'}
             </p>
           </div>
           <div className="inline-flex rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-1">
@@ -478,8 +555,8 @@ export function ProductDetailPanel({
             <div>
               <h3 className="text-lg font-bold text-[#202820]">{t.marketComparison}</h3>
               <p className="text-xs text-[#6B756A]">
-                Karnataka wholesale APMC mandi rates for {cropName} · Distances from{' '}
-                {location.name}
+                Wholesale APMC mandi comparison for {cropName} · Distances from{' '}
+                {location.district}, {location.state}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -525,7 +602,7 @@ export function ProductDetailPanel({
             <div className="rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/55 p-3.5">
               <p className="text-xs text-[#245C3A] font-medium">{t.highestListedPrice}</p>
               <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
-                ₹{comparison.highest.modalPrice}/kg
+                {formatRate(comparison.highest.modalPrice, comparison.highest.modalPriceQuintal)}
               </p>
               <p className="text-xs text-[#6B756A] mt-0.5">
                 {t.marketNames[comparison.highest.marketId] || comparison.highest.marketName}
@@ -535,7 +612,7 @@ export function ProductDetailPanel({
             <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
               <p className="text-xs text-[#6B756A]">{t.lowestListedPrice}</p>
               <p className="mt-1 font-mono text-xl font-bold text-[#202820] tabular-nums">
-                ₹{comparison.lowest.modalPrice}/kg
+                {formatRate(comparison.lowest.modalPrice, comparison.lowest.modalPriceQuintal)}
               </p>
               <p className="text-xs text-[#6B756A] mt-0.5">
                 {t.marketNames[comparison.lowest.marketId] || comparison.lowest.marketName}
@@ -545,10 +622,11 @@ export function ProductDetailPanel({
             <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-3.5">
               <p className="text-xs text-[#6B756A]">{t.priceDifference}</p>
               <p className="mt-1 font-mono text-xl font-bold text-[#245C3A] tabular-nums">
-                ₹{comparison.spread}/kg ({comparison.spreadPercent}%)
+                ₹{priceUnit === 'quintal' ? Math.round(comparison.spread * 100) : comparison.spread}/
+                {unitSuffix} ({comparison.spreadPercent}%)
               </p>
               <p className="text-xs text-[#6B756A] mt-0.5">
-                Avg ₹{comparison.averageModal}/kg across {comparison.entries.length} mandis
+                Avg {formatRate(comparison.averageModal)} across {comparison.entries.length} mandis
               </p>
             </div>
           </div>
@@ -621,8 +699,8 @@ export function ProductDetailPanel({
                   <th className="py-2.5 px-3">Modal Price</th>
                   <th className="py-2.5 px-3">Min – Max</th>
                   <th className="py-2.5 px-3">Approx. Distance</th>
-                  <th className="py-2.5 px-3">7D Trend</th>
-                  <th className="py-2.5 pl-3 text-right">Arrival Date</th>
+                  <th className="py-2.5 px-3">Change</th>
+                  <th className="py-2.5 pl-3 text-right">Observation</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E4E9E0] text-sm">
@@ -634,10 +712,13 @@ export function ProductDetailPanel({
                         <span className="font-semibold text-[#202820]">
                           {t.marketNames[m.marketId] || m.marketName}
                         </span>
-                        <span className="block text-xs text-[#6B756A]">{m.district}</span>
+                        <span className="block text-xs text-[#6B756A]">
+                          {m.district}
+                          {m.state ? `, ${m.state}` : ''}
+                        </span>
                       </td>
                       <td className="py-3 px-3 font-mono font-bold text-[#202820] tabular-nums">
-                        ₹{m.modalPrice}/kg
+                        {formatRate(m.modalPrice, m.modalPriceQuintal)}
                         {isTop && (
                           <span className="ml-2 text-[11px] font-sans font-semibold text-[#245C3A]">
                             Highest
@@ -645,18 +726,23 @@ export function ProductDetailPanel({
                         )}
                       </td>
                       <td className="py-3 px-3 font-mono text-xs text-[#6B756A] tabular-nums">
-                        ₹{m.minPrice} – ₹{m.maxPrice}
+                        {formatRate(m.minPrice, m.minPriceQuintal)} –{' '}
+                        {formatRate(m.maxPrice, m.maxPriceQuintal)}
                       </td>
                       <td className="py-3 px-3 font-mono text-xs text-[#202820] tabular-nums">
                         {m.distanceKm ? `~${m.distanceKm} km` : '—'}
                       </td>
-                      <td
-                        className={`py-3 px-3 font-mono text-xs font-semibold tabular-nums ${
-                          m.trendPercent >= 0 ? 'text-[#245C3A]' : 'text-amber-700'
-                        }`}
-                      >
-                        {m.trendPercent >= 0 ? '+' : ''}
-                        {m.trendPercent}%
+                      <td className="py-3 px-3 font-mono text-xs font-semibold tabular-nums">
+                        {m.trendPercent === null || crop.isDemo ? (
+                          <span className="text-[#6B756A]">—</span>
+                        ) : (
+                          <span
+                            className={m.trendPercent >= 0 ? 'text-[#245C3A]' : 'text-amber-700'}
+                          >
+                            {m.trendPercent >= 0 ? '+' : ''}
+                            {m.trendPercent}%
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 pl-3 text-right text-xs text-[#6B756A] tabular-nums">
                         {m.arrivalDate}
@@ -693,10 +779,11 @@ export function ProductDetailPanel({
                     </div>
                     <div className="text-right">
                       <p className="font-mono font-bold text-base text-[#202820] tabular-nums">
-                        ₹{m.modalPrice}/kg
+                        {formatRate(m.modalPrice, m.modalPriceQuintal)}
                       </p>
                       <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">
-                        ₹{m.minPrice}–₹{m.maxPrice}
+                        {formatRate(m.minPrice, m.minPriceQuintal)}–
+                        {formatRate(m.maxPrice, m.maxPriceQuintal)}
                       </p>
                     </div>
                   </div>
@@ -712,7 +799,7 @@ export function ProductDetailPanel({
         </section>
       )}
 
-      {/* SECTION E: NUTRITION INFORMATION (Compact, secondary) */}
+      {/* SECTION E: NUTRITION INFORMATION */}
       <section
         id="sec-nutrition"
         className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6"
@@ -756,7 +843,10 @@ export function ProductDetailPanel({
               {label: t.waterReq, value: crop.cropInfo.waterRequirements},
               {label: t.soil, value: crop.cropInfo.soil},
             ].map((row) => (
-              <div key={row.label} className="border-b border-[#E4E9E0] last:border-b-0 pb-2.5 last:pb-0">
+              <div
+                key={row.label}
+                className="border-b border-[#E4E9E0] last:border-b-0 pb-2.5 last:pb-0"
+              >
                 <dt className="text-xs font-semibold uppercase tracking-wider text-[#6B756A]">
                   {row.label}
                 </dt>
@@ -886,42 +976,37 @@ export function ProductDetailPanel({
       </section>
 
       {/* SECTION K: RELATED CROPS */}
-      <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6">
-        <h3 className="text-lg font-bold text-[#202820] mb-3">{t.relatedCropsTitle}</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {relatedCrops.map((rel) => {
-            const relName = t.cropNames[rel.id] || rel.name;
-            return (
-              <button
-                key={rel.id}
-                type="button"
-                onClick={() => onSelectCrop(rel.id)}
-                className="flex items-center gap-3 p-3 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] hover:border-[#245C3A] hover:bg-white transition-colors text-left cursor-pointer"
-              >
-                <CropImage
-                  src={rel.image}
-                  alt={relName}
-                  className="w-12 h-12 rounded-xl border border-[#E4E9E0] shrink-0"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-[#202820] truncate">{relName}</p>
-                  <p className="font-mono text-xs font-bold text-[#245C3A] tabular-nums">
-                    ₹{rel.modalPrice}/kg
-                  </p>
-                </div>
-                <span
-                  className={`font-mono text-xs font-semibold tabular-nums ${
-                    rel.priceChangePercent >= 0 ? 'text-[#245C3A]' : 'text-amber-700'
-                  }`}
+      {relatedCrops.length > 0 && (
+        <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6">
+          <h3 className="text-lg font-bold text-[#202820] mb-3">{t.relatedCropsTitle}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {relatedCrops.map((rel) => {
+              const relName = t.cropNames[rel.id] || rel.name;
+              return (
+                <button
+                  key={rel.id}
+                  type="button"
+                  onClick={() => onSelectCrop(rel.id)}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] hover:border-[#245C3A] hover:bg-white transition-colors text-left cursor-pointer"
                 >
-                  {rel.priceChangePercent >= 0 ? '+' : ''}
-                  {rel.priceChangePercent}%
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
+                  <CropImage
+                    src={rel.image}
+                    alt={relName}
+                    category={rel.category}
+                    className="w-12 h-12 rounded-xl border border-[#E4E9E0] shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#202820] truncate">{relName}</p>
+                    <p className="font-mono text-xs font-bold text-[#245C3A] tabular-nums">
+                      {formatRate(rel.modalPrice, rel.modalPriceQuintal)}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </article>
   );
 }

@@ -1,17 +1,40 @@
+import {Loader2} from 'lucide-react';
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {AppLayout} from './components/AppLayout';
+import {AuthGateScreen} from './components/AuthGateScreen';
+import {GrandOpeningScreen} from './components/GrandOpeningScreen';
 import {HomeDashboard} from './components/HomeDashboard';
 import {InsightsView} from './components/InsightsView';
+import {LocationOnboardingScreen} from './components/LocationOnboardingScreen';
 import {MarketPricesView} from './components/MarketPricesView';
 import {MyCropsView} from './components/MyCropsView';
 import {PriceAlertModal} from './components/PriceAlertModal';
 import {Toast} from './components/Toast';
 import {WeatherView} from './components/WeatherView';
+import {CROP_PRODUCTS} from './data/crops';
 import {TRANSLATIONS} from './data/translations';
 import {useAudioPlayer} from './hooks/useAudioPlayer';
-import {useKrishiStore} from './hooks/useKrishiStore';
+import {LocationProfilePatch, useKrishiStore} from './hooks/useKrishiStore';
+import {
+  DEFAULT_MARKET_SYNC_STATUS,
+  fetchDynamicMarketFeed,
+  mergeMarketObservations,
+  triggerMarketSync,
+} from './services/marketProvider';
 import {weatherProvider} from './services/weatherProvider';
-import {CropProduct, NavTab, WeatherSnapshot} from './types/krishi';
+import {
+  CropProduct,
+  MarketFeedResponse,
+  NavTab,
+  WeatherSnapshot,
+} from './types/krishi';
+
+const OFFICIAL_LOGO_URL = '/assets/aistudio/1b0ca66f-3975-4c99-adee-4dfad66df9ff_06020d3d.png';
+
+function getErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
 
 export default function App() {
   const store = useKrishiStore();
@@ -22,13 +45,35 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [alertModalCrop, setAlertModalCrop] = useState<CropProduct | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Weather state (real API only, explicit error if unavailable)
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
   const [weatherLoading, setWeatherLoading] = useState<boolean>(false);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+
+  // Dynamic AGMARKNET Market feed state
+  const [marketFeed, setMarketFeed] = useState<MarketFeedResponse>({
+    status: DEFAULT_MARKET_SYNC_STATUS,
+    observations: {},
+  });
+  const [marketSyncing, setMarketSyncing] = useState<boolean>(false);
+
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState<boolean>(false);
 
   const t = useMemo(
     () => TRANSLATIONS[store.selectedLanguage] || TRANSLATIONS.en,
     [store.selectedLanguage],
+  );
+
+  // Merge live/cached AGMARKNET observations with 44-crop Indian catalog
+  const products = useMemo(
+    () =>
+      mergeMarketObservations(
+        CROP_PRODUCTS,
+        marketFeed.observations,
+        marketFeed.status,
+      ),
+    [marketFeed],
   );
 
   // Google Maps Case A Quota Exceeded listener
@@ -38,27 +83,110 @@ export default function App() {
     return () => window.removeEventListener('gmp-quota-exceeded', onQuota);
   }, []);
 
-  // Load Open-Meteo live weather (with demo fallback)
-  const loadWeather = useCallback(async () => {
-    setWeatherLoading(true);
+  const isAuthenticatedAndReady = Boolean(
+    store.user &&
+      store.user.emailVerified &&
+      store.farmerProfile &&
+      store.farmerProfile.onboardingCompleted &&
+      store.farmerProfile.hasSeenGrandOpening,
+  );
+
+  // Load dynamic market prices from backend AGMARKNET pipeline
+  const loadMarketFeed = useCallback(async () => {
+    if (!isAuthenticatedAndReady) return;
     try {
-      const snapshot = await weatherProvider.getForecast(
-        store.selectedLocation,
-        store.alertPrefs,
-      );
-      setWeather(snapshot);
-    } finally {
-      setWeatherLoading(false);
+      const feed = await fetchDynamicMarketFeed({
+        state: store.farmerProfile?.state || store.selectedLocation.state,
+        district: store.selectedLocation.district,
+        preferredMandi: store.farmerProfile?.preferredMandi,
+      });
+      setMarketFeed(feed);
+    } catch {
+      setMarketFeed((prev) => ({
+        ...prev,
+        status: {
+          ...prev.status,
+          sourceStatus: 'catalog_reference',
+          sourceLabel: 'Reference Catalog (Market server unreachable)',
+          isStale: true,
+          staleReason: 'Unable to reach /api/market/prices right now.',
+        },
+      }));
     }
-  }, [store.selectedLocation, store.alertPrefs]);
+  }, [
+    isAuthenticatedAndReady,
+    store.farmerProfile?.state,
+    store.farmerProfile?.preferredMandi,
+    store.selectedLocation.state,
+    store.selectedLocation.district,
+  ]);
 
   useEffect(() => {
-    void loadWeather();
+    void loadMarketFeed();
+  }, [loadMarketFeed]);
+
+  const handleRefreshMarket = useCallback(async () => {
+    setMarketSyncing(true);
+    try {
+      const state = store.farmerProfile?.state || store.selectedLocation.state;
+      const synced = await triggerMarketSync(state);
+      setMarketFeed(synced);
+      if (synced.status.sourceStatus === 'live_agmarknet') {
+        setToastMessage(
+          `Synced ${synced.status.matchedCropCount} live AGMARKNET crop rates.`,
+        );
+      } else {
+        setToastMessage(synced.status.sourceLabel);
+      }
+    } catch (err: unknown) {
+      setToastMessage(getErrorMessage(err, 'Unable to refresh AGMARKNET prices right now.'));
+    } finally {
+      setMarketSyncing(false);
+    }
+  }, [store.farmerProfile?.state, store.selectedLocation.state]);
+
+  // Load live weather forecast & crop-sensitive advisories
+  const loadWeather = useCallback(
+    async (forceRefresh = false) => {
+      if (!isAuthenticatedAndReady) return;
+      setWeatherLoading(true);
+      setWeatherError(null);
+      try {
+        const snapshot = await weatherProvider.getForecast(
+          store.selectedLocation,
+          store.alertPrefs,
+          {
+            taluk: store.farmerProfile?.taluk,
+            savedCropIds: store.favoriteCropIds,
+            forceRefresh,
+          },
+        );
+        setWeather(snapshot);
+      } catch (err: unknown) {
+        setWeather(null);
+        setWeatherError(
+          getErrorMessage(err, 'Live weather service is currently unavailable.'),
+        );
+      } finally {
+        setWeatherLoading(false);
+      }
+    },
+    [
+      isAuthenticatedAndReady,
+      store.selectedLocation,
+      store.alertPrefs,
+      store.farmerProfile?.taluk,
+      store.favoriteCropIds,
+    ],
+  );
+
+  useEffect(() => {
+    void loadWeather(false);
   }, [loadWeather]);
 
-  // Surface audio or cloud sync errors via toast
+  // Surface audio errors via toast
   useEffect(() => {
-    if (audio.error) {
+    if (audio.error && audio.activeKey !== 'daily-briefing') {
       setToastMessage(audio.error);
       audio.clearError();
     }
@@ -79,31 +207,173 @@ export default function App() {
   const handleToggleFavorite = useCallback(
     (cropId: string) => {
       const added = store.toggleFavorite(cropId);
-      const cropName = t.cropNames[cropId] || cropId;
-      setToastMessage(added ? `Added ${cropName} to My Crops.` : `Removed ${cropName} from My Crops.`);
+      const crop = products.find((p) => p.id === cropId);
+      const cropName = t.cropNames[cropId] || crop?.name || cropId;
+      setToastMessage(
+        added ? `Added ${cropName} to My Crops.` : `Removed ${cropName} from My Crops.`,
+      );
     },
-    [store, t],
+    [store, products, t],
   );
 
-  const handleSignIn = useCallback(
+  const handleWorkspaceSignIn = useCallback(
     async (includeWorkspace = false) => {
       try {
-        const signedInUser = await store.loginWithGoogle(includeWorkspace);
+        await store.loginWithGoogle(store.farmerName, includeWorkspace);
         setToastMessage(
-          `Signed in as ${signedInUser.displayName || signedInUser.email || 'Farmer'}.`,
+          includeWorkspace
+            ? 'Connected Google Workspace (Contacts & Chat).'
+            : `Signed in as ${store.farmerName}.`,
         );
-      } catch (err: any) {
-        if (err?.code === 'auth/popup-closed-by-user') return;
-        setToastMessage(err?.message || 'Unable to sign in with Google right now.');
+      } catch (err: unknown) {
+        const msg = getErrorMessage(err, 'Unable to connect Google right now.');
+        if (msg.includes('popup-closed-by-user')) return;
+        setToastMessage(msg);
       }
     },
     [store],
   );
 
   const handleSignOut = useCallback(async () => {
+    audio.stop();
+    audio.clearBriefing();
+    setWeather(null);
+    setWeatherError(null);
+    setActiveTab('home');
     await store.logoutGoogle();
-    setToastMessage('Signed out. Local crops and notes remain saved on this device.');
-  }, [store]);
+    setToastMessage('Signed out safely. Sign in again to access your KRISHI-MITHRA profile.');
+  }, [audio, store]);
+
+  const handleUpdateFarmerName = useCallback(
+    async (newName: string) => {
+      await store.updateFarmerName(newName);
+      setToastMessage(`Updated your name to ${newName}.`);
+    },
+    [store],
+  );
+
+  const handleUpdateLocationProfile = useCallback(
+    async (patch: LocationProfilePatch) => {
+      await store.updateLocationProfile(patch);
+      setToastMessage(`Updated farm location to ${patch.district}, ${patch.state}.`);
+    },
+    [store],
+  );
+
+  const handlePlayDailyBriefing = useCallback(
+    (forceRefresh = false) => {
+      void audio.playDailyBriefing({
+        farmerName: store.farmerName,
+        locationId: store.selectedLocation.id,
+        state: store.farmerProfile?.state || store.selectedLocation.state,
+        district: store.selectedLocation.district,
+        taluk: store.farmerProfile?.taluk,
+        preferredMandi: store.farmerProfile?.preferredMandi,
+        savedCropIds: store.favoriteCropIds,
+        language: store.selectedLanguage,
+        forceRefresh,
+      });
+    },
+    [
+      audio,
+      store.farmerName,
+      store.selectedLocation.id,
+      store.selectedLocation.state,
+      store.selectedLocation.district,
+      store.farmerProfile?.state,
+      store.farmerProfile?.taluk,
+      store.farmerProfile?.preferredMandi,
+      store.favoriteCropIds,
+      store.selectedLanguage,
+    ],
+  );
+
+  // STEP 0: Branded loading state while Firebase Auth & Firestore profile hydrate
+  if (!store.authReady || (store.user && store.profileLoading)) {
+    return (
+      <div className="min-h-screen bg-[#F7F8F4] flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-24 h-24 rounded-2xl bg-[#050705] p-2 shadow-lg border border-[#E4E9E0] flex items-center justify-center">
+          <img
+            src={OFFICIAL_LOGO_URL}
+            alt="KRISHI-MITHRA"
+            className="w-full h-full object-contain"
+          />
+        </div>
+        <div className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#245C3A]">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Loading your KRISHI-MITHRA profile...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // STEP 1: Compulsory Auth Gate (Google Sign-In + Compulsory Farmer Name)
+  if (!store.user || !store.user.emailVerified) {
+    return (
+      <>
+        <AuthGateScreen
+          selectedLanguage={store.selectedLanguage}
+          onChangeLanguage={store.setLanguage}
+          onGoogleSignIn={async (farmerName) => {
+            await store.loginWithGoogle(farmerName, false);
+          }}
+          externalError={store.cloudError}
+        />
+        <Toast message={toastMessage} onDismiss={() => setToastMessage(null)} />
+      </>
+    );
+  }
+
+  // STEP 2: First-Time Location Onboarding (Pan-India State, District, Taluk, Preferred Mandi)
+  if (store.farmerProfile && !store.farmerProfile.onboardingCompleted) {
+    return (
+      <>
+        <LocationOnboardingScreen
+          farmerName={store.farmerName}
+          initialState={store.farmerProfile.state}
+          initialLocationId={store.selectedLocationId}
+          onComplete={async (patch) => {
+            await store.completeLocationOnboarding(patch);
+          }}
+        />
+        <Toast message={toastMessage} onDismiss={() => setToastMessage(null)} />
+      </>
+    );
+  }
+
+  // STEP 3: First-Time Grand Opening Welcome Screen (Shown once per new account)
+  if (store.farmerProfile && !store.farmerProfile.hasSeenGrandOpening) {
+    const locationLabel = [
+      store.farmerProfile.taluk,
+      store.selectedLocation.district,
+      store.farmerProfile.state || store.selectedLocation.state,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    const preferredMandi =
+      store.farmerProfile.preferredMandi ||
+      store.selectedLocation.mandis[0] ||
+      `${store.selectedLocation.district} APMC`;
+
+    return (
+      <>
+        <GrandOpeningScreen
+          farmerName={store.farmerName}
+          locationLabel={locationLabel}
+          preferredMandi={preferredMandi}
+          language={store.selectedLanguage}
+          onEnterDashboard={async () => {
+            await store.markGrandOpeningSeen();
+          }}
+        />
+        <Toast message={toastMessage} onDismiss={() => setToastMessage(null)} />
+      </>
+    );
+  }
+
+  // STEP 4: Main Personalized KRISHI-MITHRA Application
+  const isDailyBriefingActive = audio.activeKey === 'daily-briefing';
+  const isDailyBriefingLoading = audio.loadingKey === 'daily-briefing';
 
   return (
     <>
@@ -131,18 +401,18 @@ export default function App() {
           setActiveTab(tab);
           window.scrollTo({top: 0, behavior: 'smooth'});
         }}
+        farmerName={store.farmerName}
+        farmerProfile={store.farmerProfile}
         selectedLocation={store.selectedLocation}
-        onSelectLocation={(locId) => {
-          store.setLocationId(locId);
-          setToastMessage('Updated farm district and weather forecast.');
-        }}
+        onUpdateFarmerName={handleUpdateFarmerName}
+        onUpdateLocationProfile={handleUpdateLocationProfile}
         selectedLanguage={store.selectedLanguage}
         onSelectLanguage={(lang) => {
           store.setLanguage(lang);
         }}
         user={store.user}
         syncing={store.syncing}
-        onSignIn={handleSignIn}
+        onSignIn={handleWorkspaceSignIn}
         onSignOut={handleSignOut}
         alertPrefs={store.alertPrefs}
         onUpdateAlertPrefs={store.updateAlertPrefs}
@@ -154,16 +424,36 @@ export default function App() {
           <HomeDashboard
             t={t}
             language={store.selectedLanguage}
+            farmerName={store.farmerName}
+            farmerProfile={store.farmerProfile}
+            isReturningUserSession={store.isReturningUserSession}
+            onDismissReturningWelcome={store.dismissReturningWelcome}
             location={store.selectedLocation}
+            products={products}
+            marketStatus={marketFeed.status}
+            marketSyncing={marketSyncing}
+            onRefreshMarket={() => void handleRefreshMarket()}
             weather={weather}
             weatherLoading={weatherLoading}
+            weatherError={weatherError}
+            onRetryWeather={() => void loadWeather(true)}
             favoriteCropIds={store.favoriteCropIds}
             priceAlerts={store.priceAlerts}
             onNavigate={setActiveTab}
             onOpenCropDetail={handleOpenCropDetail}
-            audioActiveKey={audio.activeKey}
-            audioLoadingKey={audio.loadingKey}
-            onListen={(params) => void audio.speakText(params)}
+            briefingStatus={isDailyBriefingActive ? audio.status : 'idle'}
+            briefingLoading={isDailyBriefingLoading}
+            briefingData={audio.briefing}
+            briefingError={audio.error}
+            onPlayDailyBriefing={handlePlayDailyBriefing}
+            onPauseAudio={audio.pause}
+            onResumeAudio={audio.resume}
+            onStopAudio={audio.stop}
+            onDismissBriefing={() => {
+              audio.stop();
+              audio.clearBriefing();
+              audio.clearError();
+            }}
           />
         )}
 
@@ -172,6 +462,10 @@ export default function App() {
             t={t}
             language={store.selectedLanguage}
             location={store.selectedLocation}
+            products={products}
+            marketStatus={marketFeed.status}
+            marketSyncing={marketSyncing}
+            onRefreshMarket={() => void handleRefreshMarket()}
             selectedCropId={selectedCropId}
             onSelectCrop={setSelectedCropId}
             favoriteCropIds={store.favoriteCropIds}
@@ -191,10 +485,12 @@ export default function App() {
           <WeatherView
             t={t}
             language={store.selectedLanguage}
+            farmerName={store.farmerName}
             location={store.selectedLocation}
             weather={weather}
             loading={weatherLoading}
-            onRefresh={() => void loadWeather()}
+            weatherError={weatherError}
+            onRefresh={() => void loadWeather(true)}
             alertPrefs={store.alertPrefs}
             onUpdateAlertPrefs={store.updateAlertPrefs}
             audioActiveKey={audio.activeKey}
@@ -206,6 +502,8 @@ export default function App() {
         {activeTab === 'my-crops' && (
           <MyCropsView
             t={t}
+            products={products}
+            marketStatus={marketFeed.status}
             favoriteCropIds={store.favoriteCropIds}
             priceAlerts={store.priceAlerts}
             onToggleFavorite={handleToggleFavorite}
@@ -224,7 +522,11 @@ export default function App() {
           <InsightsView
             t={t}
             language={store.selectedLanguage}
+            farmerName={store.farmerName}
             location={store.selectedLocation}
+            preferredMandi={store.farmerProfile?.preferredMandi}
+            products={products}
+            favoriteCropIds={store.favoriteCropIds}
             weather={weather}
             farmNotes={store.farmNotes}
             workspaceToken={store.workspaceToken}
@@ -233,7 +535,7 @@ export default function App() {
               store.removeFarmNote(id);
               setToastMessage('Farm note deleted.');
             }}
-            onConnectWorkspace={() => handleSignIn(true)}
+            onConnectWorkspace={() => handleWorkspaceSignIn(true)}
             onOpenCropDetail={handleOpenCropDetail}
             onNotify={setToastMessage}
             audioActiveKey={audio.activeKey}
@@ -251,7 +553,8 @@ export default function App() {
         onClose={() => setAlertModalCrop(null)}
         onSave={(input) => {
           store.addPriceAlert(input);
-          const cropName = t.cropNames[input.cropId] || input.cropId;
+          const crop = products.find((p) => p.id === input.cropId);
+          const cropName = t.cropNames[input.cropId] || crop?.name || input.cropId;
           setToastMessage(`Price alert set for ${cropName} at ₹${input.targetPrice}/kg.`);
         }}
       />

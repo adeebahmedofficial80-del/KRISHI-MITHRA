@@ -1,117 +1,194 @@
 import {
+  AlertCircle,
   ArrowRight,
   ArrowUpRight,
   CloudSun,
+  Info,
+  Loader2,
   MapPin,
+  Pause,
+  RefreshCw,
   ShieldAlert,
   Sprout,
   Store,
   Volume2,
-  VolumeX,
+  X,
 } from 'lucide-react';
 import {useMemo, useState} from 'react';
 import {Line, LineChart, ResponsiveContainer} from 'recharts';
-import {TranslationPack} from '../data/translations';
-import {marketProvider} from '../services/marketProvider';
+import {getTimeBasedGreeting, TranslationPack} from '../data/translations';
+import {AudioPlaybackStatus} from '../hooks/useAudioPlayer';
+import {getMarketComparisonForProduct} from '../services/marketProvider';
 import {
   CropProduct,
+  DailyBriefingResponse,
+  FarmerProfile,
   LanguageCode,
   LocationOption,
+  MarketSyncStatus,
   NavTab,
   PriceAlert,
   WeatherSnapshot,
 } from '../types/krishi';
+import {BriefingPlayerBar} from './BriefingPlayerBar';
 import {CropImage} from './CropImage';
 
 interface HomeDashboardProps {
   t: TranslationPack;
   language: LanguageCode;
+  farmerName: string;
+  farmerProfile: FarmerProfile | null;
+  isReturningUserSession: boolean;
+  onDismissReturningWelcome: () => void;
   location: LocationOption;
+  products: CropProduct[];
+  marketStatus: MarketSyncStatus;
+  marketSyncing: boolean;
+  onRefreshMarket: () => void;
   weather: WeatherSnapshot | null;
   weatherLoading: boolean;
+  weatherError: string | null;
+  onRetryWeather: () => void;
   favoriteCropIds: string[];
   priceAlerts: PriceAlert[];
   onNavigate: (tab: NavTab) => void;
   onOpenCropDetail: (cropId: string) => void;
-  audioActiveKey: string | null;
-  audioLoadingKey: string | null;
-  onListen: (params: {
-    key: string;
-    text: string;
-    language: LanguageCode;
-    quickSummarizeTopic?: string;
-    quickSummarizePayload?: Record<string, unknown>;
-  }) => void;
+  briefingStatus: AudioPlaybackStatus;
+  briefingLoading: boolean;
+  briefingData: DailyBriefingResponse | null;
+  briefingError: string | null;
+  onPlayDailyBriefing: (forceRefresh?: boolean) => void;
+  onPauseAudio: () => void;
+  onResumeAudio: () => void;
+  onStopAudio: () => void;
+  onDismissBriefing: () => void;
 }
-
-const PULSE_IDS = ['tomato', 'onion', 'potato', 'banana'];
 
 export function HomeDashboard({
   t,
   language,
+  farmerName,
+  farmerProfile,
+  isReturningUserSession,
+  onDismissReturningWelcome,
   location,
+  products,
+  marketStatus,
+  marketSyncing,
+  onRefreshMarket,
   weather,
   weatherLoading,
+  weatherError,
+  onRetryWeather,
   favoriteCropIds,
   priceAlerts,
   onNavigate,
   onOpenCropDetail,
-  audioActiveKey,
-  audioLoadingKey,
-  onListen,
+  briefingStatus,
+  briefingLoading,
+  briefingData,
+  briefingError,
+  onPlayDailyBriefing,
+  onPauseAudio,
+  onResumeAudio,
+  onStopAudio,
+  onDismissBriefing,
 }: HomeDashboardProps) {
-  const allProducts = useMemo(() => marketProvider.getAllProducts(), []);
-  const pulseProducts = useMemo(
-    () =>
-      PULSE_IDS.map((id) => allProducts.find((c) => c.id === id)).filter(
-        (c): c is CropProduct => Boolean(c),
-      ),
-    [allProducts],
-  );
-
-  const [compareCropId, setCompareCropId] = useState<string>('tomato');
-  const compareSummary = useMemo(
-    () => marketProvider.getMarketComparison(compareCropId, location),
-    [compareCropId, location],
-  );
-
   const monitoredCrops = useMemo(
     () =>
       favoriteCropIds
-        .map((id) => allProducts.find((c) => c.id === id))
+        .map((id) => products.find((c) => c.id === id))
         .filter((c): c is CropProduct => Boolean(c)),
-    [allProducts, favoriteCropIds],
+    [products, favoriteCropIds],
   );
 
-  const recentMovers = useMemo(
-    () =>
-      [...allProducts]
+  const [compareCropId, setCompareCropId] = useState<string>(
+    favoriteCropIds[0] || products[0]?.id || 'tomato',
+  );
+
+  const effectiveCompareCrop = useMemo(
+    () => products.find((c) => c.id === compareCropId) || monitoredCrops[0] || products[0],
+    [products, compareCropId, monitoredCrops],
+  );
+
+  const compareSummary = useMemo(
+    () => getMarketComparisonForProduct(effectiveCompareCrop, location),
+    [effectiveCompareCrop, location],
+  );
+
+  // Regional market highlights (broader regional snapshot, clearly separated from personal tracked crops)
+  const regionalHighlights = useMemo(() => {
+    const liveWithMovement = products.filter((p) => !p.isDemo && p.hasComparableHistory);
+    if (liveWithMovement.length >= 4) {
+      return [...liveWithMovement]
         .sort((a, b) => Math.abs(b.priceChangePercent) - Math.abs(a.priceChangePercent))
-        .slice(0, 5),
-    [allProducts],
-  );
+        .slice(0, 4);
+    }
+    const stapleIds = ['tomato', 'onion', 'potato', 'banana'];
+    return stapleIds
+      .map((id) => products.find((p) => p.id === id))
+      .filter((c): c is CropProduct => Boolean(c));
+  }, [products]);
 
-  const rainProb = weather?.rainProbability ?? 20;
+  const greeting = getTimeBasedGreeting(language, farmerName);
+  const localityLine = [
+    farmerProfile?.taluk,
+    location.district,
+    location.state,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  const rainProb = weather?.rainProbability;
   const rainSummaryText =
-    rainProb >= 60 ? t.highRainChance : rainProb >= 35 ? t.moderateRainChance : t.lowRainChance;
+    rainProb === undefined
+      ? ''
+      : rainProb >= 60
+        ? t.highRainChance
+        : rainProb >= 35
+          ? t.moderateRainChance
+          : t.lowRainChance;
 
-  const audioKey = 'home-briefing';
-  const isPlaying = audioActiveKey === audioKey;
-  const isAudioLoading = audioLoadingKey === audioKey;
+  const advisoryCount = weather?.advisories?.length ?? 0;
+  const activeAlertsCount = priceAlerts.filter((a) => a.enabled).length;
+  const trackedCount = monitoredCrops.length;
 
   return (
     <div className="space-y-6">
-      {/* Welcome Banner */}
+      {/* Returning User Concise Welcome Banner */}
+      {isReturningUserSession && (
+        <div className="bg-[#EAF3E8] border border-[#CBE0C6] rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-xs sm:text-sm font-medium text-[#1E4A2F]">
+            Welcome back, <span className="font-bold">{farmerName}</span>! Your saved location (
+            {localityLine}) and {trackedCount} tracked {trackedCount === 1 ? 'crop' : 'crops'} are
+            loaded.
+          </p>
+          <button
+            type="button"
+            onClick={onDismissReturningWelcome}
+            aria-label="Dismiss welcome message"
+            className="p-1 rounded-lg text-[#245C3A] hover:bg-white/60 cursor-pointer shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Personalized Welcome Banner + Gemini Listen CTA */}
       <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#245C3A]">
+          <div className="inline-flex flex-wrap items-center gap-1.5 text-xs font-semibold text-[#245C3A]">
             <MapPin className="w-3.5 h-3.5" />
-            <span>
-              {location.name}, {location.state}
-            </span>
+            <span>{localityLine}</span>
+            {farmerProfile?.preferredMandi && (
+              <>
+                <span className="text-[#94A393]">·</span>
+                <span className="text-[#5B675B]">Mandi: {farmerProfile.preferredMandi}</span>
+              </>
+            )}
           </div>
           <h1 className="mt-1 text-2xl sm:text-3xl font-bold text-[#202820] tracking-tight">
-            {t.goodMorning}
+            {greeting}
           </h1>
           <p className="mt-1 text-sm text-[#6B756A]">{t.welcomeSub}</p>
         </div>
@@ -119,31 +196,25 @@ export function HomeDashboard({
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            disabled={isAudioLoading}
-            onClick={() =>
-              onListen({
-                key: audioKey,
-                text: `Good morning. In ${location.name}, current temperature is ${weather?.currentTemperature ?? 26} degrees Celsius with ${rainProb} percent rain probability. Tomato modal price is 22 rupees per kg, Onion is 45 rupees per kg, Potato is 24 rupees per kg, and Banana is 35 rupees per kg.`,
-                language,
-                quickSummarizeTopic: 'Morning market and weather briefing',
-                quickSummarizePayload: {
-                  location: location.name,
-                  temperatureC: weather?.currentTemperature ?? 26,
-                  rainChancePercent: rainProb,
-                  keyPricesInrPerKg: {Tomato: 22, Onion: 45, Potato: 24, Banana: 35},
-                  topAdvisory: weather?.advisories?.[0]?.recommendation,
-                },
-              })
-            }
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] text-sm font-semibold text-[#202820] hover:bg-[#EAF3E8] cursor-pointer min-h-[44px]"
+            disabled={briefingLoading}
+            onClick={() => onPlayDailyBriefing(false)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#245C3A]/30 bg-[#EAF3E8] text-sm font-semibold text-[#1E4A2F] hover:bg-[#DCECD8] disabled:opacity-70 cursor-pointer min-h-[44px] transition-colors"
           >
-            {isPlaying ? (
-              <VolumeX className="w-4 h-4 text-[#245C3A]" />
+            {briefingLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-[#245C3A]" />
+            ) : briefingStatus === 'playing' ? (
+              <Pause className="w-4 h-4 text-[#245C3A]" />
             ) : (
               <Volume2 className="w-4 h-4 text-[#245C3A]" />
             )}
             <span>
-              {isAudioLoading ? t.loadingAudio : isPlaying ? t.stopAudio : t.listenSummary}
+              {briefingLoading
+                ? 'Preparing your morning update...'
+                : briefingStatus === 'playing'
+                  ? 'Pause Briefing'
+                  : briefingStatus === 'paused'
+                    ? 'Resume Briefing'
+                    : t.listenSummary}
             </span>
           </button>
 
@@ -152,14 +223,32 @@ export function HomeDashboard({
             onClick={() => onNavigate('markets')}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#245C3A] text-white text-sm font-semibold hover:bg-[#1d4b2f] transition-colors cursor-pointer min-h-[44px]"
           >
-            <span>{t.viewAllPrices}</span>
+            <span>Explore Marketplace</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
       </section>
 
-      {/* 4 Summary Cards */}
+      {/* Personalized Gemini Daily Briefing Player & Transcript */}
+      <BriefingPlayerBar
+        status={briefingStatus}
+        isLoading={briefingLoading}
+        briefing={briefingData}
+        error={briefingError}
+        onPlayOrToggle={() => onPlayDailyBriefing(false)}
+        onRefresh={() => onPlayDailyBriefing(true)}
+        onPause={onPauseAudio}
+        onResume={onResumeAudio}
+        onStop={onStopAudio}
+        onDismiss={() => {
+          onStopAudio();
+          onDismissBriefing();
+        }}
+      />
+
+      {/* 4 Live Dynamic Summary Cards (Zero Hardcoded Counts or Fake Weather) */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Market Prices (Personal Tracked Count) */}
         <button
           type="button"
           onClick={() => onNavigate('markets')}
@@ -172,11 +261,16 @@ export function HomeDashboard({
             <Store className="w-4 h-4 text-[#245C3A]" />
           </div>
           <p className="mt-2 font-mono text-2xl font-bold text-[#202820] tabular-nums">
-            {t.pricesAvailable}
+            {trackedCount} {trackedCount === 1 ? 'crop' : 'crops'} tracked
           </p>
-          <p className="mt-1 text-xs text-[#6B756A]">{t.marketPricesCardSub}</p>
+          <p className="mt-1 text-xs text-[#6B756A]">
+            {trackedCount === 0
+              ? 'Start selecting the crops you want to monitor.'
+              : `${products.length} vegetables & fruits available in Marketplace`}
+          </p>
         </button>
 
+        {/* Card 2: Today's Real Weather */}
         <button
           type="button"
           onClick={() => onNavigate('weather')}
@@ -188,14 +282,31 @@ export function HomeDashboard({
             </span>
             <CloudSun className="w-4 h-4 text-[#5A91C8]" />
           </div>
-          <p className="mt-2 font-mono text-2xl font-bold text-[#202820] tabular-nums">
-            {weatherLoading && !weather ? '—' : `${weather?.currentTemperature ?? 26}°C`}
-          </p>
-          <p className="mt-1 text-xs text-[#6B756A] tabular-nums">
-            {rainSummaryText} · {rainProb}%
-          </p>
+          {weatherLoading && !weather ? (
+            <>
+              <p className="mt-2 font-mono text-2xl font-bold text-[#6B756A]">Loading...</p>
+              <p className="mt-1 text-xs text-[#6B756A]">Fetching live local weather</p>
+            </>
+          ) : weather ? (
+            <>
+              <p className="mt-2 font-mono text-2xl font-bold text-[#202820] tabular-nums">
+                {weather.currentTemperature}°C
+              </p>
+              <p className="mt-1 text-xs text-[#6B756A] tabular-nums truncate">
+                {rainSummaryText} · {weather.rainProbability}% · {weather.updatedAt}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-base font-bold text-amber-800">Unavailable</p>
+              <p className="mt-1 text-xs text-[#6B756A] truncate">
+                {weatherError || 'Tap to retry live weather'}
+              </p>
+            </>
+          )}
         </button>
 
+        {/* Card 3: Real Farm Advisory Count */}
         <button
           type="button"
           onClick={() => onNavigate('weather')}
@@ -208,13 +319,15 @@ export function HomeDashboard({
             <ShieldAlert className="w-4 h-4 text-[#245C3A]" />
           </div>
           <p className="mt-2 font-mono text-2xl font-bold text-[#202820] tabular-nums">
-            {weather?.advisories?.length ?? 3} {t.updatesCount}
+            {weatherLoading && !weather ? '—' : `${advisoryCount} ${t.updatesCount}`}
           </p>
           <p className="mt-1 text-xs text-[#6B756A] truncate">
-            {weather?.advisories?.[0]?.recommendation || t.checkRecommendations}
+            {weather?.advisories?.[0]?.recommendation ||
+              (weatherError ? 'Waiting for live weather data' : t.checkRecommendations)}
           </p>
         </button>
 
+        {/* Card 4: My Crops Saved */}
         <button
           type="button"
           onClick={() => onNavigate('my-crops')}
@@ -227,32 +340,153 @@ export function HomeDashboard({
             <Sprout className="w-4 h-4 text-[#245C3A]" />
           </div>
           <p className="mt-2 font-mono text-2xl font-bold text-[#202820] tabular-nums">
-            {favoriteCropIds.length} saved
+            {trackedCount} saved
           </p>
           <p className="mt-1 text-xs text-[#6B756A] tabular-nums">
-            {priceAlerts.filter((a) => a.enabled).length} active price alerts
+            {activeAlertsCount} active price {activeAlertsCount === 1 ? 'alert' : 'alerts'}
           </p>
         </button>
       </section>
 
-      {/* Today's Market Pulse */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+      {/* Personal Monitored Crops Section (Strictly User's Selected Crops) */}
+      <section className="bg-white border border-[#E4E9E0] rounded-2xl p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-[#202820]">{t.todaysMarketPulse}</h2>
-            <p className="text-xs text-[#6B756A]">{t.demoBannerPrefix}</p>
+            <h2 className="text-lg font-bold text-[#202820]">{t.myMonitoredCrops}</h2>
+            <p className="text-xs text-[#6B756A]">
+              {trackedCount === 0
+                ? 'Your personal watchlist starts empty so you track only the crops you grow.'
+                : `Monitoring ${trackedCount} selected ${trackedCount === 1 ? 'crop' : 'crops'} in ${localityLine}`}
+            </p>
           </div>
           <button
             type="button"
-            onClick={() => onNavigate('markets')}
-            className="text-sm font-semibold text-[#245C3A] hover:underline cursor-pointer"
+            onClick={() => onNavigate(trackedCount === 0 ? 'markets' : 'my-crops')}
+            className="text-xs font-semibold text-[#245C3A] hover:underline cursor-pointer"
           >
-            {t.viewAllPrices}
+            {trackedCount === 0 ? 'Add Crops' : 'Manage My Crops'}
           </button>
         </div>
 
+        {monitoredCrops.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[#CFD9C8] bg-[#F7F9F4] py-8 px-4 text-center">
+            <Sprout className="w-8 h-8 text-[#245C3A] mx-auto" />
+            <p className="mt-2 text-base font-semibold text-[#202820]">
+              0 crops tracked yet
+            </p>
+            <p className="mt-1 text-xs sm:text-sm text-[#6B756A] max-w-md mx-auto">
+              Start selecting the vegetables and fruits you grow from our {products.length}-crop
+              Indian Marketplace to see personalized rates, alerts, and crop-specific advisories.
+            </p>
+            <button
+              type="button"
+              onClick={() => onNavigate('markets')}
+              className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#245C3A] text-white text-xs sm:text-sm font-semibold hover:bg-[#1D4B2F] cursor-pointer"
+            >
+              <span>Browse {products.length} Vegetables & Fruits</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {monitoredCrops.map((crop) => {
+              const name = t.cropNames[crop.id] || crop.name;
+              const positive = crop.priceChangePercent >= 0;
+              return (
+                <button
+                  key={crop.id}
+                  type="button"
+                  onClick={() => onOpenCropDetail(crop.id)}
+                  className="flex items-center gap-3 p-3.5 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] hover:border-[#245C3A] text-left cursor-pointer transition-colors"
+                >
+                  <CropImage
+                    src={crop.image}
+                    alt={name}
+                    category={crop.category}
+                    className="w-12 h-12 rounded-xl border border-[#E4E9E0] shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#202820] truncate">{name}</p>
+                    <p className="text-xs text-[#6B756A] truncate">
+                      {t.marketNames[crop.marketId] || crop.market}
+                    </p>
+                    <p className="text-[11px] text-[#6B756A]">
+                      {crop.isDemo ? 'Reference baseline' : `Observed ${crop.updatedAt}`}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-mono text-base font-bold text-[#202820] tabular-nums">
+                      ₹{crop.modalPrice}/kg
+                    </p>
+                    {crop.hasComparableHistory && !crop.isDemo ? (
+                      <p
+                        className={`font-mono text-xs font-semibold tabular-nums ${
+                          positive ? 'text-[#245C3A]' : 'text-amber-700'
+                        }`}
+                      >
+                        {positive ? '+' : ''}
+                        {crop.priceChangePercent}%
+                      </p>
+                    ) : (
+                      <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">
+                        ₹{crop.modalPriceQuintal ?? crop.modalPrice * 100}/qtl
+                      </p>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Regional Market Overview (Clearly labeled with AGMARKNET sync status) */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-[#202820]">
+              Regional Market Snapshot
+            </h2>
+            <p className="text-xs text-[#6B756A] flex items-center gap-1.5 mt-0.5">
+              <Info className="w-3.5 h-3.5 text-[#245C3A]" />
+              <span>
+                {marketStatus.sourceLabel}
+                {marketStatus.observationDate ? ` · ${marketStatus.observationDate}` : ''}
+              </span>
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {marketStatus.agmarknetConfigured && (
+              <button
+                type="button"
+                disabled={marketSyncing}
+                onClick={onRefreshMarket}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#E4E9E0] bg-white hover:bg-[#FAF9F4] text-xs font-semibold text-[#202820] cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${marketSyncing ? 'animate-spin' : ''}`} />
+                <span>{marketSyncing ? 'Syncing...' : 'Refresh Prices'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onNavigate('markets')}
+              className="text-sm font-semibold text-[#245C3A] hover:underline cursor-pointer"
+            >
+              {t.viewAllPrices}
+            </button>
+          </div>
+        </div>
+
+        {marketStatus.isStale && marketStatus.staleReason && (
+          <div className="rounded-xl bg-[#FDF6EB] border border-[#EBD5B3] px-3.5 py-2.5 text-xs text-[#7D4E10] flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{marketStatus.staleReason}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {pulseProducts.map((crop) => {
+          {regionalHighlights.map((crop) => {
             const name = t.cropNames[crop.id] || crop.name;
             const positive = crop.priceChangePercent >= 0;
             return (
@@ -266,6 +500,7 @@ export function HomeDashboard({
                   <CropImage
                     src={crop.image}
                     alt={name}
+                    category={crop.category}
                     className="w-12 h-12 rounded-xl border border-[#E4E9E0] shrink-0"
                   />
                   <div className="min-w-0">
@@ -282,17 +517,23 @@ export function HomeDashboard({
                       ₹{crop.modalPrice}
                       <span className="text-xs font-normal text-[#6B756A]">/kg</span>
                     </p>
-                    <p
-                      className={`font-mono text-xs font-semibold tabular-nums flex items-center gap-0.5 ${
-                        positive ? 'text-[#245C3A]' : 'text-amber-700'
-                      }`}
-                    >
-                      <ArrowUpRight className={`w-3.5 h-3.5 ${!positive ? 'rotate-90' : ''}`} />
-                      <span>
-                        {positive ? '+' : ''}
-                        {crop.priceChangePercent}%
-                      </span>
-                    </p>
+                    {crop.hasComparableHistory && !crop.isDemo ? (
+                      <p
+                        className={`font-mono text-xs font-semibold tabular-nums flex items-center gap-0.5 ${
+                          positive ? 'text-[#245C3A]' : 'text-amber-700'
+                        }`}
+                      >
+                        <ArrowUpRight className={`w-3.5 h-3.5 ${!positive ? 'rotate-90' : ''}`} />
+                        <span>
+                          {positive ? '+' : ''}
+                          {crop.priceChangePercent}%
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-[#6B756A]">
+                        {crop.isDemo ? 'Reference baseline' : 'Latest observation'}
+                      </p>
+                    )}
                   </div>
 
                   <div className="w-20 h-10">
@@ -315,7 +556,7 @@ export function HomeDashboard({
         </div>
       </section>
 
-      {/* Compare Nearby Markets + Weather Preview Split */}
+      {/* Compare Nearby Markets + 7-Day Weather Preview Split */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Nearby Markets Quick Widget */}
         <div className="lg:col-span-6 bg-white border border-[#E4E9E0] rounded-2xl p-5 flex flex-col justify-between gap-4">
@@ -324,11 +565,11 @@ export function HomeDashboard({
               <h2 className="text-lg font-bold text-[#202820]">{t.compareNearbyMarkets}</h2>
               <select
                 aria-label="Choose crop to compare markets"
-                value={compareCropId}
+                value={effectiveCompareCrop?.id || ''}
                 onChange={(e) => setCompareCropId(e.target.value)}
                 className="px-3 py-1.5 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] text-sm font-medium text-[#202820]"
               >
-                {allProducts.map((c) => (
+                {products.map((c) => (
                   <option key={c.id} value={c.id}>
                     {t.cropNames[c.id] || c.name}
                   </option>
@@ -354,7 +595,7 @@ export function HomeDashboard({
                     <p className="mt-1 font-mono text-xl font-bold text-[#245C3A] tabular-nums">
                       ₹{compareSummary.spread}/kg
                     </p>
-                    <p className="text-xs text-[#6B756A]">
+                    <p className="text-xs text-[#6B756A] truncate">
                       vs {compareSummary.lowest.marketName}
                     </p>
                   </div>
@@ -365,13 +606,15 @@ export function HomeDashboard({
 
           <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#E4E9E0]">
             <p className="text-xs text-[#6B756A]">{t.transportCostNote}</p>
-            <button
-              type="button"
-              onClick={() => onOpenCropDetail(compareCropId)}
-              className="px-3.5 py-2 rounded-xl bg-[#245C3A] text-white text-xs font-semibold whitespace-nowrap cursor-pointer hover:bg-[#1d4b2f]"
-            >
-              {t.compareMarketsBtn}
-            </button>
+            {effectiveCompareCrop && (
+              <button
+                type="button"
+                onClick={() => onOpenCropDetail(effectiveCompareCrop.id)}
+                className="px-3.5 py-2 rounded-xl bg-[#245C3A] text-white text-xs font-semibold whitespace-nowrap cursor-pointer hover:bg-[#1d4b2f]"
+              >
+                {t.compareMarketsBtn}
+              </button>
+            )}
           </div>
         </div>
 
@@ -381,8 +624,8 @@ export function HomeDashboard({
             <div>
               <h2 className="text-lg font-bold text-[#202820]">{t.sevenDayForecast}</h2>
               <p className="text-xs text-[#6B756A]">
-                {weather?.locationName || location.name} ·{' '}
-                {weather?.sourceLabel || 'Loading weather...'}
+                {weather?.locationName || localityLine} ·{' '}
+                {weather?.sourceLabel || (weatherLoading ? 'Loading live weather...' : 'Offline')}
               </p>
             </div>
             <button
@@ -394,134 +637,59 @@ export function HomeDashboard({
             </button>
           </div>
 
-          <div className="grid grid-cols-7 gap-1.5 overflow-x-auto">
-            {(weather?.forecast ?? []).slice(0, 7).map((day) => (
-              <div
-                key={day.date}
-                className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-2 text-center"
-              >
-                <p className="text-[11px] font-semibold text-[#6B756A] truncate">
-                  {day.dayLabel}
-                </p>
-                <p className="mt-1 font-mono text-sm font-bold text-[#202820] tabular-nums">
-                  {day.maxTemp}°
-                </p>
-                <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">{day.minTemp}°</p>
-                <p className="mt-1 font-mono text-[10px] font-semibold text-[#5A91C8] tabular-nums">
-                  {day.rainProbability}%
-                </p>
-              </div>
-            ))}
-          </div>
-
-          {weather?.advisories?.[0] && (
-            <div className="rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/40 px-3.5 py-2.5 text-xs text-[#202820]">
-              <span className="font-semibold text-[#245C3A]">Tip: </span>
-              {weather.advisories[0].recommendation}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Monitored Crops + Recent Updates */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <div className="lg:col-span-7 bg-white border border-[#E4E9E0] rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-bold text-[#202820]">{t.myMonitoredCrops}</h2>
-            <button
-              type="button"
-              onClick={() => onNavigate('my-crops')}
-              className="text-xs font-semibold text-[#245C3A] hover:underline cursor-pointer"
-            >
-              Manage
-            </button>
-          </div>
-          {monitoredCrops.length === 0 ? (
-            <div className="py-6 text-center">
-              <p className="text-sm text-[#6B756A]">{t.noCropsTitle}</p>
-              <button
-                type="button"
-                onClick={() => onNavigate('markets')}
-                className="mt-3 px-4 py-2 rounded-xl bg-[#245C3A] text-white text-xs font-semibold cursor-pointer"
-              >
-                {t.noCropsAction}
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {monitoredCrops.map((crop) => (
-                <button
-                  key={crop.id}
-                  type="button"
-                  onClick={() => onOpenCropDetail(crop.id)}
-                  className="flex items-center gap-3 p-3 rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] hover:border-[#245C3A] text-left cursor-pointer"
-                >
-                  <CropImage
-                    src={crop.image}
-                    alt={t.cropNames[crop.id] || crop.name}
-                    className="w-11 h-11 rounded-xl border border-[#E4E9E0] shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-[#202820] truncate">
-                      {t.cropNames[crop.id] || crop.name}
-                    </p>
-                    <p className="text-xs text-[#6B756A] truncate">
-                      {t.marketNames[crop.marketId] || crop.market}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-mono text-sm font-bold text-[#202820] tabular-nums">
-                      ₹{crop.modalPrice}/kg
-                    </p>
-                    <p
-                      className={`font-mono text-xs font-semibold tabular-nums ${
-                        crop.priceChangePercent >= 0 ? 'text-[#245C3A]' : 'text-amber-700'
-                      }`}
-                    >
-                      {crop.priceChangePercent >= 0 ? '+' : ''}
-                      {crop.priceChangePercent}%
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="lg:col-span-5 bg-white border border-[#E4E9E0] rounded-2xl p-5">
-          <h2 className="text-lg font-bold text-[#202820] mb-3">{t.recentUpdates}</h2>
-          <div className="divide-y divide-[#E4E9E0]">
-            {recentMovers.map((crop) => (
-              <button
-                key={crop.id}
-                type="button"
-                onClick={() => onOpenCropDetail(crop.id)}
-                className="w-full py-2.5 flex items-center justify-between text-left hover:bg-[#FAF9F4] px-2 -mx-2 rounded-lg cursor-pointer"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-[#202820]">
-                    {t.cropNames[crop.id] || crop.name}
-                  </p>
-                  <p className="text-xs text-[#6B756A]">
-                    {t.marketNames[crop.marketId] || crop.market}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="font-mono text-sm font-bold text-[#202820] tabular-nums">
-                    ₹{crop.modalPrice}/kg
-                  </p>
-                  <p
-                    className={`font-mono text-xs font-semibold tabular-nums ${
-                      crop.priceChangePercent >= 0 ? 'text-[#245C3A]' : 'text-amber-700'
-                    }`}
+          {weather ? (
+            <>
+              <div className="grid grid-cols-7 gap-1.5 overflow-x-auto">
+                {weather.forecast.slice(0, 7).map((day) => (
+                  <div
+                    key={day.date}
+                    className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-2 text-center"
                   >
-                    {crop.priceChangePercent >= 0 ? '+' : ''}
-                    {crop.priceChangePercent}%
-                  </p>
+                    <p className="text-[11px] font-semibold text-[#6B756A] truncate">
+                      {day.dayLabel}
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-bold text-[#202820] tabular-nums">
+                      {day.maxTemp}°
+                    </p>
+                    <p className="font-mono text-[11px] text-[#6B756A] tabular-nums">
+                      {day.minTemp}°
+                    </p>
+                    <p className="mt-1 font-mono text-[10px] font-semibold text-[#5A91C8] tabular-nums">
+                      {day.rainProbability}%
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {weather.advisories[0] && (
+                <div className="rounded-xl border border-[#E4E9E0] bg-[#EAF3E8]/40 px-3.5 py-2.5 text-xs text-[#202820]">
+                  <span className="font-semibold text-[#245C3A]">
+                    {weather.advisories[0].sourceType === 'crop_suggestion'
+                      ? 'Crop Advisory: '
+                      : 'Weather Advisory: '}
+                  </span>
+                  {weather.advisories[0].recommendation}
                 </div>
-              </button>
-            ))}
-          </div>
+              )}
+            </>
+          ) : (
+            <div className="rounded-xl border border-[#E4E9E0] bg-[#FAF9F4] p-5 text-center space-y-2">
+              <p className="text-xs text-[#6B756A]">
+                {weatherLoading
+                  ? 'Fetching live 7-day weather forecast...'
+                  : weatherError || 'Unable to load live weather right now.'}
+              </p>
+              {!weatherLoading && (
+                <button
+                  type="button"
+                  onClick={onRetryWeather}
+                  className="px-3 py-1.5 rounded-lg bg-[#245C3A] text-white text-xs font-semibold cursor-pointer"
+                >
+                  Retry Weather
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </section>
     </div>
