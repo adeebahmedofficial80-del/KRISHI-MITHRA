@@ -1,0 +1,141 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSlug(slug) {
+      return slug is string && slug.size() >= 2 && slug.size() <= 64 && slug.matches('^[a-z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidAlertPrefs(prefs) {
+      return prefs is map
+        && prefs.keys().hasAll(['rain', 'heavyRain', 'temperature', 'wind', 'dailyForecast'])
+        && prefs.keys().hasOnly(['rain', 'heavyRain', 'temperature', 'wind', 'dailyForecast'])
+        && prefs.rain is bool
+        && prefs.heavyRain is bool
+        && prefs.temperature is bool
+        && prefs.wind is bool
+        && prefs.dailyForecast is bool;
+    }
+
+    function isValidUserPreferences(data, userId) {
+      return data.keys().hasAll(['uid', 'selectedLocationId', 'selectedLanguage', 'favoriteCropIds', 'alertPrefs', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'selectedLocationId', 'selectedLanguage', 'favoriteCropIds', 'alertPrefs', 'updatedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && isValidSlug(data.selectedLocationId)
+        && data.selectedLanguage in ['en', 'kn', 'hi', 'te', 'ta']
+        && data.favoriteCropIds is list
+        && data.favoriteCropIds.size() <= 25
+        && (data.favoriteCropIds.size() == 0 || (data.favoriteCropIds[0] is string && data.favoriteCropIds[0].size() <= 64))
+        && isValidAlertPrefs(data.alertPrefs)
+        && data.updatedAt == request.time;
+    }
+
+    function isValidPriceAlert(data, userId, alertId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'cropId', 'targetPrice', 'condition', 'channel', 'enabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'cropId', 'targetPrice', 'condition', 'channel', 'enabled', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && data.id == alertId
+        && isValidId(data.id)
+        && data.ownerUid is string
+        && data.ownerUid == userId
+        && isValidSlug(data.cropId)
+        && (data.targetPrice is int || data.targetPrice is float)
+        && data.targetPrice > 0
+        && data.targetPrice <= 100000
+        && data.condition in ['above', 'below']
+        && data.channel in ['app', 'sms_demo', 'whatsapp_demo']
+        && data.enabled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function isValidFarmNote(data, userId, noteId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'title', 'content', 'cropId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'title', 'content', 'cropId', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && data.id == noteId
+        && isValidId(data.id)
+        && data.ownerUid is string
+        && data.ownerUid == userId
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && data.content is string
+        && data.content.size() >= 1
+        && data.content.size() <= 2000
+        && data.cropId is string
+        && data.cropId.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUserPreferences(incoming(), userId);
+      allow update: if isValidId(userId) && isOwner(userId)
+        && isValidUserPreferences(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['selectedLocationId', 'selectedLanguage', 'favoriteCropIds', 'alertPrefs', 'updatedAt']);
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      match /alerts/{alertId} {
+        allow get: if isValidId(userId) && isValidId(alertId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(alertId) && isOwner(userId)
+          && isValidPriceAlert(incoming(), userId, alertId)
+          && incoming().createdAt == request.time;
+        allow update: if isValidId(userId) && isValidId(alertId) && isOwner(userId)
+          && isValidPriceAlert(incoming(), userId, alertId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['targetPrice', 'condition', 'channel', 'enabled', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(alertId) && isOwner(userId);
+      }
+
+      match /notes/{noteId} {
+        allow get: if isValidId(userId) && isValidId(noteId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(noteId) && isOwner(userId)
+          && isValidFarmNote(incoming(), userId, noteId)
+          && incoming().createdAt == request.time;
+        allow update: if isValidId(userId) && isValidId(noteId) && isOwner(userId)
+          && isValidFarmNote(incoming(), userId, noteId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'cropId', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(noteId) && isOwner(userId);
+      }
+    }
+  }
+}

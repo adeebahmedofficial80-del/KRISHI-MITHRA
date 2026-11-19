@@ -1,0 +1,6 @@
+{
+  "name": "Krishi Mitra",
+  "description": "Smart farmer market price monitoring, 20-crop vegetable and fruit intelligence, nutrition profiles, live weather forecasts, and agricultural advisories for Indian farmers.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

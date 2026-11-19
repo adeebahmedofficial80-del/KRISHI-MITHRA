@@ -1,0 +1,1967 @@
+# PROJECT: KRISHI MITRA — SMART FARMER MARKET & WEATHER INTELLIGENCE PLATFORM
+
+## ROLE AND EXPECTATION
+
+Act as a world-class product designer, senior frontend engineer, UX architect, agricultural technology specialist, data visualization expert, and full-stack software developer.
+
+Build an exceptionally polished, production-quality, responsive web application for Indian farmers.
+
+The platform must combine:
+
+1. Agricultural market price monitoring and comparison.
+2. Weather forecasting and agricultural weather intelligence.
+3. Farmer-focused insights and actionable recommendations.
+
+The final product should feel like a professionally designed digital agricultural service created by an experienced team that has spent years working with farmers, agricultural markets, and rural technology.
+
+This is NOT a generic dashboard.
+
+This is NOT a typical AI-generated landing page.
+
+This is NOT a complex enterprise analytics interface.
+
+It must be a genuinely useful, intuitive, trustworthy, visually exceptional farming platform.
+
+The application name is:
+
+**KRISHI MITRA**
+
+Tagline:
+
+**Better prices. Better decisions. Better harvests.**
+
+Supporting tagline:
+
+"Your daily companion for smarter farming."
+
+---
+
+# 1. CORE PRODUCT OBJECTIVE
+
+Create a digital tool that allows a farmer to answer these questions quickly:
+
+- What is the current market price of my crop?
+- Which nearby mandi is offering the best price?
+- Is today's price higher or lower than yesterday?
+- Is the price rising or falling over the past week?
+- Which crops currently have strong market prices?
+- Should I sell today or monitor the market?
+- What will the weather be like today and over the next 7 days?
+- Is rain expected?
+- Should I irrigate my field?
+- Is there a risk of heavy rain, high temperature, or strong wind?
+- What agricultural action should I take today?
+
+The interface should make these answers immediately visible without forcing farmers to navigate complicated menus.
+
+Prioritize simplicity, clarity, accessibility, trust, and practical usefulness.
+
+---
+
+# 2. TARGET USERS
+
+Primary users:
+
+- Small and marginal farmers in India.
+- Farmers with limited technical knowledge.
+- Farmers using Android smartphones.
+- Farmers with slow or unstable internet connections.
+- Farmers who may be more comfortable with regional languages than English.
+- Farmers who need clear numerical information and simple visual explanations.
+
+Secondary users:
+
+- Agricultural students.
+- Farmer Producer Organizations (FPOs).
+- Agricultural advisors.
+- Market researchers.
+- Rural development organizations.
+
+Design for a farmer who may be opening the website for the first time.
+
+Do not assume that the user understands:
+
+- Complex financial charts.
+- Technical weather terminology.
+- Stock market-style analytics.
+- Digital product navigation.
+- Complicated filters.
+
+Every important element must have an understandable label.
+
+---
+
+# 3. DESIGN DIRECTION
+
+## Visual style
+
+Create a sophisticated, minimal, natural, modern agricultural aesthetic.
+
+The design should combine:
+
+- Modern fintech-level clarity.
+- Agricultural warmth.
+- Minimal Scandinavian-style design principles.
+- Professional data visualization.
+- Indian rural context.
+- Premium software craftsmanship.
+
+The result should feel like an established agricultural technology startup rather than a student project or AI template.
+
+## Color palette
+
+Use a carefully controlled agricultural color palette.
+
+Primary forest green:
+#245C3A
+
+Secondary agricultural green:
+#3F7D46
+
+Fresh leaf green:
+#78A85A
+
+Light mint:
+#EAF3E8
+
+Background:
+#F7F8F4
+
+Warm white:
+#FFFFFF
+
+Soft cream:
+#FAF9F4
+
+Primary text:
+#202820
+
+Secondary text:
+#6B756A
+
+Border:
+#E4E9E0
+
+Success:
+#2E7D32
+
+Warning:
+#D99A28
+
+Danger:
+#C64B3B
+
+Rain blue:
+#5A91C8
+
+Avoid:
+
+- Neon green.
+- Excessive gradients.
+- Bright lime colors.
+- Heavy dark backgrounds.
+- Excessive shadows.
+- Glassmorphism everywhere.
+- Oversized decorative illustrations.
+- Excessive rounded pill buttons.
+- Artificial-looking 3D illustrations.
+- Generic AI-generated farming graphics.
+- Unnecessary decorative elements.
+
+Use a subtle, earthy green aesthetic.
+
+Green should be used for navigation, positive indicators, important actions, and agricultural identity.
+
+The interface must be primarily light mode.
+
+---
+
+# 4. DESIGN PRINCIPLES
+
+Follow these principles throughout the entire application:
+
+1. Mobile-first responsive design.
+2. Extremely clear information hierarchy.
+3. Large, readable numbers.
+4. Short and understandable labels.
+5. No clutter.
+6. Consistent spacing.
+7. Consistent typography.
+8. Simple iconography.
+9. Clear visual distinction between live data and demo data.
+10. Every dashboard section must have a real purpose.
+11. No fake functionality.
+12. Every button must perform an action.
+13. Every chart must contain meaningful data.
+14. Every data card should be useful to a farmer.
+15. No unnecessary onboarding barriers.
+
+Use a consistent spacing system based on 4px/8px increments.
+
+Recommended spacing:
+
+- 4px: tiny internal spacing.
+- 8px: compact spacing.
+- 16px: standard spacing.
+- 24px: section spacing.
+- 32px: major spacing.
+- 48px: large section spacing.
+
+Use clean typography such as Inter, Manrope, or a similarly professional sans-serif.
+
+Headings should be confident but not excessively large.
+
+Body text must be readable on low-resolution smartphone screens.
+
+---
+
+# 5. APPLICATION STRUCTURE
+
+Create a complete application with the following primary navigation:
+
+1. Home
+2. Market Prices
+3. Weather
+4. My Crops
+5. Insights
+
+Navigation should be simple.
+
+Desktop:
+
+- A compact left sidebar or top navigation.
+- Main content area.
+- Optional small contextual information area.
+
+Mobile:
+
+- Bottom navigation bar with 4–5 clearly labeled icons.
+- Home screen optimized for scrolling.
+- No horizontal overflow.
+- All essential information accessible without hovering.
+
+Include:
+
+- Search.
+- Location selector.
+- Language selector.
+- Notification icon.
+- Profile/settings section.
+
+The language selector should include:
+
+- English.
+- ಕನ್ನಡ (Kannada).
+- हिंदी (Hindi).
+- తెలుగు (Telugu).
+- தமிழ் (Tamil).
+
+For the demo, English should be the default language.
+
+The language selector must be functional or clearly prepared for implementation.
+
+---
+
+# 6. HOME DASHBOARD
+
+The homepage should immediately show the farmer the most important information.
+
+## Top header
+
+Display:
+
+KRISHI MITRA
+
+Small supporting text:
+
+"Your farming companion"
+
+Show:
+
+- Location.
+- Current date.
+- Notification icon.
+- Language selector.
+- User/profile icon.
+
+Location should be editable.
+
+Default demo location:
+
+Bengaluru Rural, Karnataka, India
+
+Use a location selector with the ability to select:
+
+- Bengaluru Rural.
+- Bengaluru Urban.
+- Mysuru.
+- Mandya.
+- Tumakuru.
+- Hassan.
+- Other locations.
+
+Do not hardcode the location throughout the application.
+
+## Welcome section
+
+Heading:
+
+"Good morning, farmer!"
+
+Supporting text:
+
+"Here is what is happening in your markets and weather today."
+
+Include a subtle, professionally designed agricultural visual or small illustration if necessary.
+
+Avoid giant hero images that consume valuable screen space.
+
+The dashboard should prioritize functionality.
+
+## Today's summary cards
+
+Create four cards:
+
+### Card 1: Market prices
+
+Label:
+
+"Market prices"
+
+Example:
+
+"Prices available"
+
+Supporting text:
+
+"10 vegetables · 10 fruits"
+
+Icon:
+
+Price tag or chart.
+
+### Card 2: Weather
+
+Label:
+
+"Today's weather"
+
+Example:
+
+"27°C"
+
+Supporting text:
+
+"Partly cloudy"
+
+Icon:
+
+Sun/cloud.
+
+### Card 3: Rain forecast
+
+Label:
+
+"Rain probability"
+
+Example:
+
+"20%"
+
+Supporting text:
+
+"Low chance of rain"
+
+Icon:
+
+Rain cloud.
+
+### Card 4: Farming alert
+
+Label:
+
+"Farm advisory"
+
+Example:
+
+"1 important update"
+
+Supporting text:
+
+"Check today's recommendations"
+
+Icon:
+
+Alert or notification.
+
+These cards must be clickable and navigate to their relevant sections.
+
+---
+
+# 7. MARKET PRICE MONITORING SYSTEM
+
+This is one of the most important modules of the application.
+
+The interface must allow farmers to monitor vegetable and fruit market prices easily.
+
+## Market price page layout
+
+Page title:
+
+"Market Prices"
+
+Supporting text:
+
+"Compare market prices and find the best place to sell your produce."
+
+Add:
+
+- Search crop.
+- Crop category selector.
+- Location selector.
+- Market selector.
+- Date selector.
+- Sort by price.
+- Sort by price change.
+
+Category tabs:
+
+- All crops.
+- Vegetables.
+- Fruits.
+- My crops.
+
+Add a clear date and update information:
+
+"Demo market data · Last updated 18 Nov 2026"
+
+The application must never imply that demo prices are live prices.
+
+When using demo data, display:
+
+"Sample market rates for demonstration purposes. Actual prices vary by market, variety, quality, and arrival date."
+
+---
+
+# 8. TOP 10 VEGETABLES FOR MARKET MONITORING
+
+Include these ten vegetables as the default monitored crops:
+
+1. Tomato
+2. Onion
+3. Potato
+4. Brinjal
+5. Green Chilli
+6. Cauliflower
+7. Cabbage
+8. Carrot
+9. Beans
+10. Capsicum
+
+These crops should appear as individual crop cards and in the market price table.
+
+Use the following realistic demonstration values for a Karnataka/Bengaluru-region interface.
+
+IMPORTANT:
+
+These are demo/reference prices and must not be presented as live verified market rates.
+
+Use ₹/kg as the farmer-friendly display unit.
+
+## Demonstration vegetable dataset
+
+| Vegetable | Sample modal price/kg | Sample minimum/kg | Sample maximum/kg | Sample trend |
+| Tomato | ₹22 | ₹16 | ₹30 | +8.5% |
+| Onion | ₹45 | ₹35 | ₹55 | +5.2% |
+| Potato | ₹24 | ₹18 | ₹32 | -3.4% |
+| Brinjal | ₹28 | ₹22 | ₹36 | +4.1% |
+| Green Chilli | ₹47 | ₹35 | ₹60 | +7.8% |
+| Cauliflower | ₹28 | ₹20 | ₹38 | -2.1% |
+| Cabbage | ₹18 | ₹12 | ₹25 | +1.5% |
+| Carrot | ₹33 | ₹25 | ₹42 | +3.7% |
+| Beans | ₹44 | ₹32 | ₹58 | +9.2% |
+| Capsicum | ₹42 | ₹30 | ₹55 | -1.8% |
+
+All numbers must be editable through the application's data structure.
+
+Do not hardcode prices directly into UI components.
+
+## Crop card design
+
+Each crop card should contain:
+
+- Crop image or realistic crop thumbnail.
+- Crop name.
+- Current modal price.
+- Price per kg.
+- Price change percentage.
+- Trend arrow.
+- Min–max price range.
+- Small 7-day trend chart.
+- "View details" action.
+- "Add to My Crops" action.
+
+Example:
+
+TOMATO
+
+₹22/kg
+
+↑ 8.5% this week
+
+Range:
+
+₹16 – ₹30/kg
+
+Small line graph.
+
+Button:
+
+"View market"
+
+Use subtle green for positive movement.
+
+Use red only for clearly negative price movements.
+
+Do not use color alone to indicate price movement. Include arrows and text.
+
+---
+
+# 9. TOP 10 FRUITS FOR MARKET MONITORING
+
+Include these ten fruits:
+
+1. Banana
+2. Apple
+3. Pomegranate
+4. Grapes
+5. Papaya
+6. Guava
+7. Orange
+8. Sweet Lime (Mosambi)
+9. Pineapple
+10. Watermelon
+
+Use realistic demonstration values for a Karnataka market context.
+
+## Demonstration fruit dataset
+
+| Fruit | Sample modal price/kg | Minimum/kg | Maximum/kg | Trend |
+| Banana | ₹35 | ₹25 | ₹50 | +3.5% |
+| Apple | ₹140 | ₹100 | ₹180 | +2.8% |
+| Pomegranate | ₹140 | ₹90 | ₹180 | +6.2% |
+| Grapes | ₹70 | ₹45 | ₹100 | +4.5% |
+| Papaya | ₹25 | ₹18 | ₹35 | -2.0% |
+| Guava | ₹35 | ₹25 | ₹50 | +5.0% |
+| Orange | ₹45 | ₹30 | ₹65 | +1.8% |
+| Mosambi | ₹40 | ₹28 | ₹55 | +3.2% |
+| Pineapple | ₹35 | ₹25 | ₹50 | -1.5% |
+| Watermelon | ₹25 | ₹15 | ₹35 | -4.0% |
+
+Display the same data format as vegetables.
+
+Clearly distinguish:
+
+- Wholesale mandi price.
+- Retail estimate, if shown.
+
+Do not mix wholesale and retail prices without labels.
+
+---
+
+# 10. MARKET PRICE TABLE
+
+Create a professional, highly readable market table.
+
+Columns:
+
+- Crop.
+- Market.
+- Variety.
+- Minimum price.
+- Modal price.
+- Maximum price.
+- Change.
+- Updated date.
+- Action.
+
+Desktop:
+
+Show a complete table.
+
+Mobile:
+
+Convert the table into crop cards or a horizontally scrollable table with proper accessibility.
+
+Do not force users to zoom.
+
+Default market examples:
+
+- Bengaluru APMC.
+- Binny Mill Fruit & Vegetable Market.
+- Hoskote APMC.
+- Doddaballapur APMC.
+- Ramanagara APMC.
+- Mysuru APMC.
+
+Each market must be selectable.
+
+The user must be able to compare the same crop across multiple markets.
+
+Example:
+
+TOMATO — MARKET COMPARISON
+
+Bengaluru APMC:
+₹22/kg
+
+Binny Mill:
+₹24/kg
+
+Hoskote:
+₹20/kg
+
+Ramanagara:
+₹23/kg
+
+Best listed price:
+
+₹24/kg
+
+Market:
+
+Binny Mill
+
+Difference:
+
+₹4/kg compared with Hoskote.
+
+This is demonstration data.
+
+The market comparison functionality should actually calculate:
+
+- Highest modal price.
+- Lowest modal price.
+- Average modal price.
+- Difference between markets.
+- Percentage difference.
+
+---
+
+# 11. PRICE DETAIL PAGE
+
+When a farmer clicks on a crop, show a detailed crop page.
+
+Example:
+
+TOMATO
+
+₹22/kg
+
+↑ 8.5% over the last 7 days
+
+Add a chart.
+
+## Chart requirements
+
+Create a beautiful and useful price history chart.
+
+Tabs:
+
+- 7 days.
+- 30 days.
+- 90 days.
+
+Show:
+
+- Daily modal price.
+- Minimum price.
+- Maximum price.
+- Price trend.
+
+The chart must have:
+
+- Clearly labeled axes.
+- Readable values.
+- Tooltips.
+- Responsive layout.
+- No unnecessary decoration.
+
+Provide a price history dataset for each crop.
+
+Do not generate random numbers on each page load.
+
+Create consistent demo datasets.
+
+## Market comparison section
+
+Show:
+
+"Compare markets"
+
+Display a ranked list:
+
+1. Market A — ₹24/kg
+2. Market B — ₹23/kg
+3. Market C — ₹22/kg
+4. Market D — ₹20/kg
+
+Highlight the best price.
+
+Include:
+
+- Market name.
+- Distance if available.
+- Price.
+- Arrival date.
+- Trend.
+
+## Farmer insight
+
+Display a simple insight:
+
+"Prices have increased by 8.5% in the last 7 days across the selected markets."
+
+Another example:
+
+"Market prices are currently higher than the 7-day average."
+
+Avoid claiming that the application can guarantee future prices.
+
+## Price alert
+
+Allow the farmer to create an alert.
+
+Example:
+
+"Notify me when tomato reaches ₹30/kg."
+
+Include:
+
+- Crop selector.
+- Target price.
+- Above/below condition.
+- Notification method.
+
+Demo alert creation should work in the frontend.
+
+---
+
+# 12. MY CROPS
+
+Create a personal crop monitoring feature.
+
+The farmer can:
+
+- Add crops to favorites.
+- Remove crops.
+- Track crop prices.
+- Set target selling prices.
+- Create price alerts.
+- View current prices for selected crops.
+
+Create a simple "My Crops" page.
+
+Example:
+
+My monitored crops:
+
+- Tomato.
+- Onion.
+- Banana.
+- Beans.
+
+Each crop should display:
+
+- Current price.
+- 7-day trend.
+- Target price.
+- Alert status.
+
+Example:
+
+Tomato
+
+Current price:
+
+₹22/kg
+
+Target price:
+
+₹30/kg
+
+Status:
+
+"Waiting for target price"
+
+Do not require login for the demo.
+
+Use local storage or another appropriate persistence method so favorites and demo alerts remain saved after refreshing.
+
+---
+
+# 13. WEATHER FORECASTING TOOL
+
+Create a dedicated weather module designed specifically for farmers.
+
+Page title:
+
+"Weather Forecast"
+
+Subtitle:
+
+"Understand the weather. Plan your farm."
+
+Default location:
+
+Bengaluru Rural, Karnataka.
+
+The location must be editable.
+
+## Current weather card
+
+Display:
+
+- Current temperature.
+- Feels-like temperature.
+- Weather condition.
+- Humidity.
+- Wind speed.
+- Wind direction.
+- Rain probability.
+- Sunrise.
+- Sunset.
+
+Example:
+
+27°C
+
+Partly cloudy
+
+Feels like 29°C
+
+Humidity: 68%
+
+Wind: 12 km/h
+
+Rain chance: 20%
+
+Sunrise: 6:15 AM
+
+Sunset: 5:52 PM
+
+Use realistic demo values.
+
+Do not label demo weather as live weather.
+
+Display:
+
+"Demo forecast"
+
+or:
+
+"Weather data simulated for demonstration."
+
+---
+
+# 14. SEVEN-DAY WEATHER FORECAST
+
+Create a clean horizontal forecast section.
+
+Each day should show:
+
+- Day.
+- Date.
+- Weather icon.
+- Minimum temperature.
+- Maximum temperature.
+- Rain probability.
+
+Example:
+
+TODAY
+
+27°C
+
+20°C
+
+Partly cloudy
+
+20% rain
+
+TOMORROW
+
+25°C
+
+19°C
+
+Light rain
+
+65% rain
+
+WEDNESDAY
+
+26°C
+
+19°C
+
+Cloudy
+
+35% rain
+
+THURSDAY
+
+28°C
+
+20°C
+
+Sunny
+
+10% rain
+
+FRIDAY
+
+29°C
+
+20°C
+
+Mostly sunny
+
+5% rain
+
+SATURDAY
+
+26°C
+
+19°C
+
+Rain showers
+
+70% rain
+
+SUNDAY
+
+27°C
+
+20°C
+
+Partly cloudy
+
+25% rain
+
+The forecast must be presented as an easy-to-read visual.
+
+Use blue for rain-related information.
+
+Use subtle colors for weather icons.
+
+Do not use excessive gradients.
+
+---
+
+# 15. WEATHER CHARTS
+
+Include:
+
+## Temperature chart
+
+A 7-day line chart.
+
+Show:
+
+- Minimum temperature.
+- Maximum temperature.
+
+## Rainfall chart
+
+Show:
+
+- Expected rainfall in mm.
+- Rain probability.
+
+## Humidity
+
+Show a simple 7-day humidity graph or compact trend.
+
+The charts must be understandable at a glance.
+
+Add descriptive tooltips.
+
+Do not make the weather interface look like a meteorological research dashboard.
+
+---
+
+# 16. AGRICULTURAL WEATHER ADVISORY
+
+This feature is extremely important.
+
+Translate weather conditions into useful farming advice.
+
+Create a card titled:
+
+"Farm Weather Advisory"
+
+Each advisory should have:
+
+- Weather condition.
+- Priority.
+- Recommended action.
+- Reason.
+- Time window.
+
+Examples:
+
+## Rain expected tomorrow
+
+Priority:
+
+Moderate
+
+Recommendation:
+
+"Delay irrigation and check field drainage before rainfall."
+
+## Strong sunlight expected
+
+Priority:
+
+Low
+
+Recommendation:
+
+"Consider irrigation during early morning or evening to reduce water loss."
+
+## High wind expected
+
+Priority:
+
+Moderate
+
+Recommendation:
+
+"Secure lightweight structures and avoid spraying pesticides during strong winds."
+
+## Heavy rainfall warning
+
+Priority:
+
+High
+
+Recommendation:
+
+"Clear drainage channels and avoid applying fertilizer before heavy rain."
+
+## High temperature
+
+Priority:
+
+Moderate
+
+Recommendation:
+
+"Check soil moisture and consider irrigation during cooler hours."
+
+## Humidity and disease risk
+
+Priority:
+
+Moderate
+
+Recommendation:
+
+"Inspect crops for fungal disease and ensure proper ventilation between plants."
+
+The advice should be conditional on weather data.
+
+Do not provide unsupported claims.
+
+Include a disclaimer:
+
+"Weather-based recommendations are general guidance. Conditions in your field may vary."
+
+---
+
+# 17. WEATHER ALERT SYSTEM
+
+Create weather alert cards.
+
+Alert types:
+
+- Heavy rainfall.
+- Thunderstorm.
+- High wind.
+- Heat.
+- Cold.
+- Dry conditions.
+
+Example:
+
+"Rain expected within 24 hours"
+
+"Moderate rainfall probability"
+
+"Plan irrigation accordingly."
+
+Use severity levels:
+
+- Low.
+- Moderate.
+- High.
+
+High priority alerts should be visually noticeable but not alarmist.
+
+Include a notification setting.
+
+Allow farmers to choose alerts for:
+
+- Rain.
+- Heavy rain.
+- Temperature.
+- Wind.
+- Daily forecast.
+
+---
+
+# 18. FARMING INSIGHTS
+
+Create a dedicated insights section.
+
+Title:
+
+"Farm Insights"
+
+Provide useful information based on market and weather data.
+
+Examples:
+
+## Market insight
+
+"Tomato prices have increased 8.5% over the past week."
+
+## Market opportunity
+
+"Binny Mill has the highest sample price for tomatoes among the selected markets."
+
+## Weather insight
+
+"Rain is expected tomorrow. Irrigation may not be necessary today."
+
+## Crop insight
+
+"Beans are showing a stronger 7-day price movement than the monitored vegetables."
+
+## Selling insight
+
+"Compare the transport cost with the price difference before travelling to another market."
+
+These insights must be based on actual calculations from the demonstration data.
+
+Do not create random AI-sounding sentences.
+
+---
+
+# 19. SEARCH FUNCTIONALITY
+
+Provide a global search.
+
+Users should be able to search:
+
+- Crop names.
+- Markets.
+- Locations.
+- Weather.
+- My crops.
+
+Example:
+
+Searching "tomato" should return:
+
+- Tomato price.
+- Tomato markets.
+- Tomato trend.
+- Tomato details.
+
+Searching "Hoskote" should return:
+
+- Hoskote market.
+- Available crops.
+- Prices.
+
+Search must be functional.
+
+---
+
+# 20. FILTERS AND SORTING
+
+Market price filters:
+
+- Vegetables.
+- Fruits.
+- My crops.
+- Price increasing.
+- Price decreasing.
+- Highest price.
+- Lowest price.
+
+Sort options:
+
+- Crop name.
+- Modal price.
+- Percentage change.
+- Highest price.
+- Lowest price.
+
+Filters should update the visible results immediately.
+
+---
+
+# 21. DEMO DATA AND DATA ARCHITECTURE
+
+Use structured data.
+
+Do not scatter demo values across components.
+
+Create separate data files or well-organized data structures.
+
+Suggested data models:
+
+Crop:
+
+- id.
+- name.
+- category.
+- image.
+- unit.
+- modalPrice.
+- minimumPrice.
+- maximumPrice.
+- priceChangePercent.
+- market.
+- variety.
+- updatedAt.
+- history.
+- marketComparisons.
+
+Market:
+
+- id.
+- name.
+- district.
+- state.
+- location.
+- distance.
+
+Weather:
+
+- location.
+- currentTemperature.
+- feelsLike.
+- humidity.
+- windSpeed.
+- windDirection.
+- rainProbability.
+- sunrise.
+- sunset.
+- forecast.
+
+ForecastDay:
+
+- date.
+- day.
+- minTemperature.
+- maxTemperature.
+- weatherCondition.
+- rainProbability.
+- rainfallMm.
+- humidity.
+
+Alert:
+
+- id.
+- type.
+- crop.
+- targetPrice.
+- condition.
+- enabled.
+
+Favorite:
+
+- cropId.
+
+---
+
+# 22. PRICE DATA SOURCE PREPARATION
+
+Prepare the application architecture for future integration with official Indian market price data.
+
+Possible sources to support:
+
+- AGMARKNET.
+- data.gov.in.
+- eNAM.
+- State APMC market data.
+
+Important:
+
+Do not pretend these APIs are connected if they are not.
+
+Do not invent API keys.
+
+Do not show fake "LIVE" badges.
+
+Create a clean data-provider abstraction.
+
+For example:
+
+MarketDataProvider
+
+Methods:
+
+- getCropPrices().
+- getMarkets().
+- getPriceHistory().
+- getMarketComparison().
+
+Create a DemoMarketDataProvider.
+
+In the future, a real API provider can replace the demo provider.
+
+The application should clearly distinguish:
+
+DEMO DATA
+
+and
+
+LIVE DATA
+
+If live data is unavailable, gracefully fall back to demonstration data.
+
+Display the last updated timestamp.
+
+Display the data source when available.
+
+---
+
+# 23. WEATHER DATA SOURCE PREPARATION
+
+Prepare an architecture for future weather API integration.
+
+Possible provider:
+
+Open-Meteo.
+
+Design a WeatherDataProvider abstraction.
+
+Methods:
+
+- getCurrentWeather().
+- getForecast().
+- getWeatherAlerts().
+- getAgriculturalAdvisory().
+
+Create a DemoWeatherDataProvider.
+
+Do not pretend that real weather API integration exists if it has not been implemented.
+
+Do not expose API keys.
+
+Use realistic forecast demo data.
+
+If a real API is available and integration can be implemented without credentials, prefer real weather data.
+
+Otherwise, clearly display:
+
+"Demo weather data"
+
+---
+
+# 24. UX AND ACCESSIBILITY
+
+The platform must be usable by people who are not highly educated or technologically experienced.
+
+Use:
+
+- Large tap targets.
+- Minimum 44px touch targets.
+- Readable text.
+- Clear icons.
+- Simple labels.
+- Accessible contrast.
+- Plain-language descriptions.
+- Short sentences.
+- No unnecessary technical terminology.
+
+For example:
+
+Instead of:
+
+"Modal price fluctuation"
+
+Use:
+
+"Today's average market price"
+
+Instead of:
+
+"Precipitation probability"
+
+Use:
+
+"Chance of rain"
+
+Instead of:
+
+"Humidity"
+
+Add:
+
+"Moisture in the air"
+
+Use icon + text combinations.
+
+Never rely on colors alone.
+
+Add descriptive tooltips where needed.
+
+---
+
+# 25. EMPTY STATES
+
+Create elegant empty states.
+
+Examples:
+
+No crops monitored:
+
+"You haven't added any crops yet."
+
+Button:
+
+"Explore market prices"
+
+No alerts:
+
+"No price alerts yet."
+
+Button:
+
+"Create price alert"
+
+No weather alerts:
+
+"No weather alerts for your selected location."
+
+No search results:
+
+"No crops found."
+
+"Try searching for another crop."
+
+---
+
+# 26. LOADING STATES
+
+Create realistic loading states.
+
+Use:
+
+- Skeleton cards.
+- Skeleton chart.
+- Loading indicator.
+
+Do not use large spinners.
+
+Do not block the entire application unnecessarily.
+
+---
+
+# 27. ERROR STATES
+
+Create friendly error messages.
+
+Examples:
+
+"Unable to load market prices."
+
+"Please try again."
+
+"Your saved crops are still available."
+
+"Weather data could not be loaded."
+
+Do not expose technical error messages to farmers.
+
+---
+
+# 28. RESPONSIVE DESIGN
+
+Desktop:
+
+- Well-balanced layout.
+- Main content width approximately 1200–1440px.
+- Comfortable spacing.
+- Optional sidebar.
+- Multiple cards in a row.
+- Readable tables.
+
+Tablet:
+
+- Two-column cards.
+- Responsive charts.
+- Compact navigation.
+
+Mobile:
+
+- Single-column layout.
+- Bottom navigation.
+- Large touch controls.
+- Sticky search where appropriate.
+- Crop cards.
+- Forecast cards.
+- No horizontal page overflow.
+- Important information above the fold.
+
+Test at:
+
+- 360px.
+- 390px.
+- 430px.
+- 768px.
+- 1024px.
+- 1440px.
+
+---
+
+# 29. MICROINTERACTIONS
+
+Use subtle, premium microinteractions.
+
+Examples:
+
+- Smooth hover state.
+- Slight card elevation.
+- Gentle button feedback.
+- Animated chart entrance.
+- Smooth navigation.
+- Favorite button animation.
+- Alert confirmation toast.
+- Filter transition.
+
+Avoid excessive animations.
+
+Animations should be fast and subtle.
+
+Respect reduced-motion accessibility settings.
+
+---
+
+# 30. VISUAL QUALITY REQUIREMENTS
+
+The final website should feel:
+
+- Professional.
+- Trustworthy.
+- Modern.
+- Calm.
+- Agricultural.
+- Human.
+- Minimal.
+- Premium.
+- Practical.
+
+Use realistic crop photographs or high-quality crop thumbnails where appropriate.
+
+Do not use:
+
+- Cartoon farmers.
+- Generic AI illustrations.
+- Overly futuristic agricultural graphics.
+- Unnecessary 3D renderings.
+- Stock photos as giant backgrounds.
+- Excessive decorative leaves.
+- Fake statistics.
+- Lorem ipsum.
+- Placeholder buttons.
+- Empty charts.
+- Broken images.
+
+If crop images are used, ensure they are consistent in quality and visual style.
+
+Prefer crop images within small cards rather than huge banners.
+
+---
+
+# 31. TECHNICAL IMPLEMENTATION
+
+Build a complete, functional application.
+
+Preferred implementation:
+
+- React.
+- TypeScript.
+- Modern component architecture.
+- Tailwind CSS or a similarly maintainable styling system.
+- Recharts or another reliable charting library.
+- Lucide icons.
+- Responsive layout.
+- Clean and reusable components.
+
+Use an appropriate project structure.
+
+Suggested components:
+
+- AppLayout.
+- Header.
+- Navigation.
+- Dashboard.
+- MarketPriceCard.
+- CropCard.
+- PriceTable.
+- PriceTrendChart.
+- MarketComparison.
+- CropDetails.
+- WeatherCard.
+- ForecastCard.
+- TemperatureChart.
+- RainfallChart.
+- FarmAdvisoryCard.
+- WeatherAlert.
+- SearchBar.
+- LocationSelector.
+- LanguageSelector.
+- NotificationPanel.
+- MyCrops.
+- PriceAlertModal.
+
+Maintain:
+
+- Clean code.
+- Strong typing.
+- Reusable components.
+- Separate data and UI.
+- No unnecessary dependencies.
+- Proper error handling.
+
+---
+
+# 32. FUNCTIONALITY THAT MUST ACTUALLY WORK
+
+The following features must be functional:
+
+1. Navigation between pages.
+2. Crop search.
+3. Market search.
+4. Crop filters.
+5. Price sorting.
+6. Market comparison.
+7. Crop detail page.
+8. Price chart date selection.
+9. Add/remove favorite crops.
+10. Save favorites across refreshes.
+11. Create demo price alerts.
+12. Enable/disable alerts.
+13. Change location.
+14. Change selected market.
+15. Select weather forecast days.
+16. Weather chart interactions.
+17. Notification preferences.
+18. Language selection interface.
+19. Responsive navigation.
+20. All buttons and links.
+
+Do not create visual elements that appear functional but do nothing.
+
+If a feature cannot be fully implemented, make its limitation clear rather than pretending.
+
+---
+
+# 33. FINAL HOME PAGE LAYOUT
+
+The home page should follow this exact hierarchy:
+
+### Header
+
+Logo + location + notifications + language.
+
+### Welcome
+
+"Good morning, farmer!"
+
+"Your markets and weather, at a glance."
+
+### Today's overview
+
+Four compact cards:
+
+- Market prices.
+- Weather.
+- Rain probability.
+- Farm advisory.
+
+### Market pulse
+
+Section:
+
+"Today's Market Pulse"
+
+Display:
+
+- Tomato.
+- Onion.
+- Potato.
+- Banana.
+
+Each with:
+
+- Price.
+- Trend.
+- Small chart.
+
+Button:
+
+"View all market prices"
+
+### Best market today
+
+Section:
+
+"Compare nearby markets"
+
+Show a crop selector.
+
+Example:
+
+Tomato:
+
+Bengaluru APMC — ₹22/kg
+
+Binny Mill — ₹24/kg
+
+Hoskote — ₹20/kg
+
+Best price:
+
+Binny Mill
+
+Button:
+
+"Compare markets"
+
+### Weather forecast
+
+Display:
+
+Today's weather.
+
+Next 7 days.
+
+Rain probability.
+
+Button:
+
+"View full forecast"
+
+### Farm advisory
+
+Display 1–3 contextual recommendations.
+
+### My crops
+
+Show favorite crops.
+
+### Recent price updates
+
+Show recent market data.
+
+---
+
+# 34. FINAL MARKET PAGE LAYOUT
+
+### Header
+
+Market Prices
+
+### Search
+
+"Search crops or markets"
+
+### Category tabs
+
+All | Vegetables | Fruits | My Crops
+
+### Market/location filter
+
+### Market overview
+
+- Number of monitored crops.
+- Price increases.
+- Price decreases.
+
+### Crop cards
+
+Ten vegetables.
+
+Ten fruits.
+
+### Market comparison
+
+### Price trend chart
+
+### Price alerts
+
+---
+
+# 35. FINAL WEATHER PAGE LAYOUT
+
+### Header
+
+Weather Forecast
+
+### Location
+
+Bengaluru Rural, Karnataka
+
+### Current weather
+
+Temperature.
+
+Conditions.
+
+Rain probability.
+
+Humidity.
+
+Wind.
+
+### 7-day forecast
+
+### Temperature chart
+
+### Rainfall chart
+
+### Weather alerts
+
+### Farm advisory
+
+### Irrigation recommendation
+
+### Crop-specific weather information
+
+Keep all information readable and easy to understand.
+
+---
+
+# 36. BRAND IDENTITY
+
+Logo concept:
+
+A minimal leaf integrated with a subtle sunrise or field line.
+
+Do not use an overly complex logo.
+
+Brand name:
+
+KRISHI MITRA
+
+Logo should be:
+
+- Clean.
+- Memorable.
+- Modern.
+- Agricultural.
+- Appropriate for an Indian farmer-facing platform.
+
+Use a small logo in the navigation.
+
+Avoid huge branding.
+
+---
+
+# 37. DEMO DATA TRANSPARENCY
+
+At every relevant place where sample information is shown, clearly identify it as demo data.
+
+Use a subtle badge:
+
+"DEMO"
+
+or:
+
+"Sample data"
+
+Example:
+
+Market prices
+
+Sample data · Updated 18 Nov 2026
+
+Weather forecast
+
+Demo forecast
+
+Never present simulated information as live government data.
+
+If real data is later connected, the UI should display:
+
+- Source.
+- Update time.
+- Market.
+- Arrival date.
+- Price unit.
+- Whether the price is wholesale or retail.
+
+---
+
+# 38. FINAL QUALITY CHECK
+
+Before completing the project, verify:
+
+- The application loads without errors.
+- The homepage is visually polished.
+- Every page has consistent styling.
+- Every button works.
+- Navigation works.
+- Search works.
+- Filters work.
+- Charts render.
+- Price comparison calculates correctly.
+- Crop favorites persist.
+- Demo alerts work.
+- Location selection works.
+- Weather pages are responsive.
+- No broken images.
+- No placeholder text.
+- No fake live data.
+- No console errors.
+- No horizontal overflow.
+- Mobile layout is excellent.
+- Text is readable.
+- The product feels professional and human-designed.
+
+---
+
+# FINAL INSTRUCTION
+
+Do not stop at a wireframe.
+
+Do not stop at a landing page.
+
+Do not generate a generic dashboard.
+
+Build the actual working application with all pages, realistic demo data, functional interactions, responsive design, market price monitoring, crop comparison, weather forecasting, farm advisories, charts, search, filters, and alerts.
+
+Take the time to refine the spacing, typography, color balance, charts, cards, navigation, and mobile experience.
+
+The final result should look like a genuine agricultural technology product that could be launched for farmers in India.
+
+The most important quality:
+
+**A farmer should open the website, understand it within 10 seconds, and immediately know what is happening with market prices and weather.**
+
+Make it extraordinary, but keep it simple.
+
+Make it beautiful, but keep it useful.
+
+Make it modern, but make it feel trustworthy.
+
+Build KRISHI MITRA as if this product will genuinely help thousands of farmers make better decisions every day.
